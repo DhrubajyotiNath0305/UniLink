@@ -22,6 +22,18 @@ export const users = sqliteTable(
     email: text("email").notNull(),
     passwordHash: text("password_hash").notNull(),
     fullName: text("full_name").notNull(),
+    username: text("username"),
+    accountType: text("account_type", { enum: ["student", "alumni"] })
+      .notNull()
+      .default("student"),
+    profilePhoto: text("profile_photo"),
+    github: text("github"),
+    linkedin: text("linkedin"),
+    location: text("location"),
+    college: text("college"),
+    graduationYear: integer("graduation_year"),
+    currentRole: text("current_role"),
+    company: text("company"),
     ...timestamps,
   },
   (table) => [uniqueIndex("users_email_unique").on(table.email)]
@@ -91,12 +103,129 @@ export const posts = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
+    image: text("image"),
+    likes: integer("likes").notNull().default(0),
+    comments: integer("comments").notNull().default(0),
     ...timestamps,
   },
   (table) => [
     index("posts_user_idx").on(table.userId),
     index("posts_created_idx").on(table.createdAt),
   ]
+);
+
+export const postLikes = sqliteTable(
+  "post_likes",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    postId: integer("post_id")
+      .notNull()
+      .references(() => posts.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at").notNull().default(now),
+  },
+  (table) => [
+    primaryKey(table.userId, table.postId),
+    index("post_likes_post_idx").on(table.postId),
+  ]
+);
+
+export const comments = sqliteTable(
+  "comments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    postId: integer("post_id")
+      .notNull()
+      .references(() => posts.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    index("comments_post_idx").on(table.postId),
+    index("comments_user_idx").on(table.userId),
+  ]
+);
+
+export const opportunities = sqliteTable(
+  "opportunities",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ownerId: integer("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    type: text("type").notNull(),
+    date: text("date"),
+    banner: text("banner"),
+    location: text("location"),
+    description: text("description"),
+    link: text("link"),
+    ...timestamps,
+  },
+  (table) => [
+    index("opportunities_owner_idx").on(table.ownerId),
+    index("opportunities_created_idx").on(table.createdAt),
+  ]
+);
+
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    senderId: integer("sender_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    type: text("type").notNull(),
+    message: text("message").notNull(),
+    link: text("link"),
+    read: integer("read").notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    index("notifications_user_idx").on(table.userId),
+    index("notifications_read_idx").on(table.read),
+  ]
+);
+
+export const messages = sqliteTable(
+  "messages",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    senderId: integer("sender_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    receiverId: integer("receiver_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    read: integer("read").notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    index("messages_sender_idx").on(table.senderId),
+    index("messages_receiver_idx").on(table.receiverId),
+  ]
+);
+
+export const stories = sqliteTable(
+  "stories",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    image: text("image").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    ...timestamps,
+  },
+  (table) => [index("stories_user_idx").on(table.userId)]
 );
 
 export const projects = sqliteTable("projects", {
@@ -106,6 +235,9 @@ export const projects = sqliteTable("projects", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
+  technologies: text("technologies"),
+  github: text("github"),
+  demo: text("demo"),
   ...timestamps,
 });
 
@@ -166,6 +298,14 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   projects: many(projects, { relationName: "ownedProjects" }),
   memberships: many(projectMembers),
   joinRequests: many(projectJoinRequests),
+  opportunities: many(opportunities, { relationName: "ownedOpportunities" }),
+  notifications: many(notifications, { relationName: "receivedNotifications" }),
+  sentNotifications: many(notifications, { relationName: "sentNotifications" }),
+  sentMessages: many(messages, { relationName: "sentMessages" }),
+  receivedMessages: many(messages, { relationName: "receivedMessages" }),
+  stories: many(stories),
+  postLikes: many(postLikes),
+  comments: many(comments),
 }));
 
 export const profilesRelations = relations(profiles, ({ one }) => ({
@@ -203,9 +343,74 @@ export const connectionsRelations = relations(connections, ({ one }) => ({
   }),
 }));
 
-export const postsRelations = relations(posts, ({ one }) => ({
+export const postsRelations = relations(posts, ({ one, many }) => ({
   author: one(users, {
     fields: [posts.userId],
+    references: [users.id],
+  }),
+  likes: many(postLikes),
+  comments: many(comments),
+}));
+
+export const postLikesRelations = relations(postLikes, ({ one }) => ({
+  user: one(users, {
+    fields: [postLikes.userId],
+    references: [users.id],
+  }),
+  post: one(posts, {
+    fields: [postLikes.postId],
+    references: [posts.id],
+  }),
+}));
+
+export const commentsRelations = relations(comments, ({ one }) => ({
+  post: one(posts, {
+    fields: [comments.postId],
+    references: [posts.id],
+  }),
+  user: one(users, {
+    fields: [comments.userId],
+    references: [users.id],
+  }),
+}));
+
+export const opportunitiesRelations = relations(opportunities, ({ one }) => ({
+  owner: one(users, {
+    fields: [opportunities.ownerId],
+    references: [users.id],
+    relationName: "ownedOpportunities",
+  }),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  user: one(users, {
+    fields: [notifications.userId],
+    references: [users.id],
+    relationName: "receivedNotifications",
+  }),
+  sender: one(users, {
+    fields: [notifications.senderId],
+    references: [users.id],
+    relationName: "sentNotifications",
+  }),
+}));
+
+export const messagesRelations = relations(messages, ({ one }) => ({
+  sender: one(users, {
+    fields: [messages.senderId],
+    references: [users.id],
+    relationName: "sentMessages",
+  }),
+  receiver: one(users, {
+    fields: [messages.receiverId],
+    references: [users.id],
+    relationName: "receivedMessages",
+  }),
+}));
+
+export const storiesRelations = relations(stories, ({ one }) => ({
+  user: one(users, {
+    fields: [stories.userId],
     references: [users.id],
   }),
 }));

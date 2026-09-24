@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:api": "vitest run --config vitest.api.config.mjs"
+    "test:api": "vitest run --config vitest.api.config.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "lucide-react": "^1.45.0",

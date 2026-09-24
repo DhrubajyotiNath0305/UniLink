@@ -15,14 +15,9 @@ import {
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
-import {
-  getConnectionStatus,
-  sendConnectionRequest,
-} from "@/utils/connectionStorage";
-
 import BottomNav from "@/components/BottomNav";
-import { useAuth } from "@/context/AuthContext";
-import { getProjects } from "@/utils/projectStorage";
+import { toClientUser, useAuth } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
 export default function OtherProfilePage() {
   const router = useRouter();
@@ -32,57 +27,77 @@ export default function OtherProfilePage() {
   const [connectionStatus, setConnectionStatus] =
     useState("none");
 
+  const [connectionCount, setConnectionCount] =
+    useState(0);
+
   const [profile, setProfile] = useState(null);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const loadProfile = () => {
+  const loadProfile = async () => {
     if (!params?.id) return;
 
-    setLoading(true);
-
     try {
-      const accounts =
-        JSON.parse(
-          localStorage.getItem("unilink_accounts")
-        ) || [];
+      const [
+        userResult,
+        accepted,
+        incoming,
+        outgoing,
+        projectsResult,
+      ] = await Promise.all([
+        request(`/api/users/${params.id}`),
+        request("/api/connections?limit=50"),
+        request("/api/connections?status=incoming&limit=50"),
+        request("/api/connections?status=outgoing&limit=50"),
+        request(
+          `/api/projects?ownerId=${params.id}&limit=50`
+        ),
+      ]);
 
-      const foundUser = accounts.find(
-        (account) =>
-          String(account.id) === String(params.id)
-      );
+      const foundUser = toClientUser(userResult?.user);
 
       if (!foundUser) {
         setProfile(null);
         setProjects([]);
+        setConnectionStatus("none");
+        setConnectionCount(0);
         setLoading(false);
         return;
       }
 
-      setProfile(foundUser);
-
-      if (user?.id) {
-        const status = getConnectionStatus(
-          user.id,
-          foundUser.id
+      const has = (list) =>
+        (list?.connections ?? []).some(
+          (connection) =>
+            String(connection.user?.id) ===
+            String(params.id)
         );
 
-        setConnectionStatus(status);
-      }
-
-      setProjects(
-        getProjects(foundUser.id) || []
+      setConnectionStatus(
+        has(accepted)
+          ? "accepted"
+          : has(outgoing) || has(incoming)
+            ? "pending"
+            : "none"
       );
+      setConnectionCount(
+        (accepted?.connections ?? []).length
+      );
+      setProjects(projectsResult.projects ?? []);
+      setProfile(foundUser);
     } catch {
       setProfile(null);
       setProjects([]);
+      setConnectionStatus("none");
+      setConnectionCount(0);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadProfile();
+    void (async () => {
+      await loadProfile();
+    })();
   }, [params?.id, user?.id]);
 
   // Refresh connection state whenever the page becomes visible again.
@@ -117,29 +132,27 @@ export default function OtherProfilePage() {
     };
   }, [params?.id, user?.id]);
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     if (!user || !profile) return;
 
     if (String(user.id) === String(profile.id)) {
       return;
     }
 
-    const currentStatus = getConnectionStatus(
-      user.id,
-      profile.id
-    );
-
-    if (currentStatus !== "none") {
-      setConnectionStatus(currentStatus);
+    if (connectionStatus !== "none") {
       return;
     }
 
-    sendConnectionRequest(
-      user.id,
-      profile.id
-    );
+    try {
+      await request("/api/connections", {
+        method: "POST",
+        body: { userId: profile.id },
+      });
 
-    setConnectionStatus("pending");
+      setConnectionStatus("pending");
+    } catch {
+      loadProfile();
+    }
   };
 
   const handleMessage = () => {
@@ -149,18 +162,7 @@ export default function OtherProfilePage() {
       return;
     }
 
-    /*
-     * Double-check the connection before opening chat.
-     * This keeps the profile page consistent with the
-     * messaging storage rules.
-     */
-    const currentStatus = getConnectionStatus(
-      user.id,
-      profile.id
-    );
-
-    if (currentStatus !== "accepted") {
-      setConnectionStatus(currentStatus);
+    if (connectionStatus !== "accepted") {
       return;
     }
 
@@ -191,7 +193,7 @@ export default function OtherProfilePage() {
             </h1>
 
             <p className="mt-2 text-sm text-slate-500">
-              This account doesn't exist.
+              This account doesn&apos;t exist.
             </p>
 
             <button
@@ -254,12 +256,6 @@ export default function OtherProfilePage() {
 
   const skills = Array.isArray(profile.skills)
     ? profile.skills
-    : [];
-
-  const connections = Array.isArray(
-    profile.connections
-  )
-    ? profile.connections
     : [];
 
   const github =
@@ -434,7 +430,7 @@ export default function OtherProfilePage() {
 
               <div className="flex flex-col items-center">
                 <strong className="text-lg font-bold text-slate-900">
-                  {connections.length}
+                  {connectionCount}
                 </strong>
 
                 <span className="mt-1 text-xs text-slate-500">
@@ -611,10 +607,10 @@ export default function OtherProfilePage() {
             <div className="mt-5 flex flex-wrap gap-2">
               {skills.map((skill, index) => (
                 <span
-                  key={`${skill}-${index}`}
+                  key={`${skill?.name ?? skill}-${index}`}
                   className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700"
                 >
-                  {skill}
+                  {skill?.name ?? skill}
                 </span>
               ))}
             </div>
@@ -641,7 +637,7 @@ export default function OtherProfilePage() {
               </h3>
 
               <p className="text-xs text-slate-500">
-                Projects they've worked on
+                Projects they&apos;ve worked on
               </p>
             </div>
 

@@ -15,12 +15,8 @@ import {
 import { useRouter } from "next/navigation";
 
 import BottomNav from "@/components/BottomNav";
-import { useAuth } from "@/context/AuthContext";
-
-import {
-  getConnectionStatus,
-  sendConnectionRequest,
-} from "@/utils/connectionStorage";
+import { useAuth, toClientUser } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
 export default function AlumniPage() {
   const router = useRouter();
@@ -31,46 +27,80 @@ export default function AlumniPage() {
   const [connectionStatuses, setConnectionStatuses] = useState({});
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    let cancelled = false;
 
-    try {
-      const accounts =
-        JSON.parse(
-          localStorage.getItem("unilink_accounts")
-        ) || [];
+    (async () => {
+      try {
+        const result = await request(
+          "/api/users?accountType=alumni&limit=50"
+        );
 
-      const alumniAccounts = accounts.filter(
-        (account) =>
-          account.accountType === "alumni"
-      );
+        if (!cancelled) {
+          setAlumni(
+            (result.users ?? []).map(toClientUser)
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setAlumni([]);
+        }
+      }
+    })();
 
-      setAlumni(alumniAccounts);
-    } catch {
-      setAlumni([]);
-    }
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const loadConnectionStatuses = async () => {
+    try {
+      const [accepted, incoming, outgoing] =
+        await Promise.all([
+          request("/api/connections?limit=50"),
+          request(
+            "/api/connections?status=incoming&limit=50"
+          ),
+          request(
+            "/api/connections?status=outgoing&limit=50"
+          ),
+        ]);
+
+      const statuses = {};
+
+      (accepted.connections ?? []).forEach((connection) => {
+        if (connection.user?.id != null) {
+          statuses[connection.user.id] = "accepted";
+        }
+      });
+
+      (outgoing.connections ?? []).forEach((connection) => {
+        if (connection.user?.id != null) {
+          statuses[connection.user.id] = "pending";
+        }
+      });
+
+      (incoming.connections ?? []).forEach((connection) => {
+        if (
+          connection.user?.id != null &&
+          !statuses[connection.user.id]
+        ) {
+          statuses[connection.user.id] = "pending";
+        }
+      });
+
+      setConnectionStatuses(statuses);
+    } catch {
+      setConnectionStatuses({});
+    }
+  };
 
   // Load connection statuses
   useEffect(() => {
-    if (!user || alumni.length === 0) return;
+    if (!user) return;
 
-    const statuses = {};
-
-    alumni.forEach((person) => {
-      if (
-        String(person.id) === String(user.id)
-      ) {
-        return;
-      }
-
-      statuses[person.id] =
-        getConnectionStatus(
-          user.id,
-          person.id
-        );
-    });
-
-    setConnectionStatuses(statuses);
+    void (async () => {
+      await loadConnectionStatuses();
+    })();
   }, [user, alumni]);
 
   const filteredAlumni = alumni.filter((person) => {
@@ -97,7 +127,7 @@ export default function AlumniPage() {
     );
   });
 
-  const handleConnect = (event, personId) => {
+  const handleConnect = async (event, personId) => {
     event.stopPropagation();
 
     if (!user) return;
@@ -109,15 +139,19 @@ export default function AlumniPage() {
       return;
     }
 
-    sendConnectionRequest(
-      user.id,
-      personId
-    );
+    try {
+      await request("/api/connections", {
+        method: "POST",
+        body: { userId: Number(personId) },
+      });
 
-    setConnectionStatuses((previous) => ({
-      ...previous,
-      [personId]: "pending",
-    }));
+      setConnectionStatuses((previous) => ({
+        ...previous,
+        [personId]: "pending",
+      }));
+    } catch {
+      // Ignore failed requests locally.
+    }
   };
 
   const openProfile = (personId) => {

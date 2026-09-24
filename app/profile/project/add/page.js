@@ -11,7 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "../../../../context/AuthContext";
-import { saveProject } from "../../../../utils/projectStorage";
+import { request } from "@/lib/api-client";
 
 export default function AddProject() {
   const router = useRouter();
@@ -22,34 +22,40 @@ export default function AddProject() {
   const [technologies, setTechnologies] = useState("");
   const [github, setGithub] = useState("");
   const [demo, setDemo] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   if (!user) {
     return null;
   }
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
 
-    const project = {
-      id: Date.now(),
-      userId: user.id,
+    setSaveError("");
 
-      name: name.trim(),
+    try {
+      setSaving(true);
 
-      description: description.trim(),
+      await request("/api/projects", {
+        method: "POST",
+        body: {
+          name: name.trim(),
+          description: description.trim(),
+          technologies: technologies.trim(),
+          github: github.trim(),
+          demo: demo.trim(),
+        },
+      });
 
-      technologies: technologies
-        .split(",")
-        .map((technology) => technology.trim())
-        .filter((technology) => technology.length > 0),
-
-      github: github.trim(),
-      demo: demo.trim(),
-    };
-
-    saveProject(project);
-
-    router.push("/profile");
+      router.push("/profile");
+    } catch {
+      setSaveError(
+        "Could not add your project. Please try again."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -73,7 +79,7 @@ export default function AddProject() {
               </h1>
 
               <p className="hidden text-[11px] text-slate-500 sm:block">
-                Showcase something you've built
+                Showcase something you&apos;ve built
               </p>
             </div>
           </div>
@@ -81,13 +87,20 @@ export default function AddProject() {
           <button
             type="submit"
             form="project-form"
-            className="flex items-center gap-2 rounded-lg bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-600 active:scale-[0.98]"
+            disabled={saving}
+            className="flex items-center gap-2 rounded-lg bg-indigo-500 px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-indigo-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save size={16} />
-            Add Project
+            {saving ? "Adding..." : "Add Project"}
           </button>
         </div>
       </header>
+
+      {saveError && (
+        <p className="mx-auto mt-3 max-w-[1000px] px-5 text-center text-sm text-red-500">
+          {saveError}
+        </p>
+      )}
 
       {/* PAGE */}
       <main className="mx-auto w-full max-w-[1000px] px-5 py-8 lg:px-8 lg:py-10">
@@ -374,6 +387,7 @@ export default function AddProject() {
 
             <button
               type="submit"
+              disabled={saving}
               className="
                 flex
                 shrink-0
@@ -389,10 +403,12 @@ export default function AddProject() {
                 transition
                 hover:bg-indigo-600
                 active:scale-[0.98]
+                disabled:cursor-not-allowed
+                disabled:opacity-50
               "
             >
               <Save size={16} />
-              Add Project
+              {saving ? "Adding..." : "Add Project"}
             </button>
           </div>
         </form>

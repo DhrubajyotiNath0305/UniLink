@@ -1,31 +1,34 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  ArrowLeft,
-  Send,
-  MoreVertical,
-  User,
-} from "lucide-react";
+import { ArrowLeft, Send, MoreVertical, User } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
-import {
-  getConversation,
-  sendMessage,
-  markConversationAsRead,
-} from "@/utils/messageStorage";
+function toClientAccount(apiUser) {
+  if (!apiUser) return null;
 
-import { getConnectionStatus } from "@/utils/connectionStorage";
+  const profile = apiUser.profile ?? {};
+
+  return {
+    id: apiUser.id,
+    name: apiUser.fullName,
+    username: apiUser.username ?? "",
+    department: profile.department ?? "",
+    year: profile.year ?? "",
+    profilePhoto: apiUser.profilePhoto ?? "",
+    avatar: apiUser.profilePhoto ?? "",
+  };
+}
 
 export default function ChatPage() {
   const router = useRouter();
   const params = useParams();
 
-  const { user, isLoggedIn, loading: authLoading } =
-    useAuth();
+  const { user, isLoggedIn, loading: authLoading } = useAuth();
 
   const otherUserId = params?.id;
 
@@ -33,52 +36,105 @@ export default function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
+  const [isConnected, setIsConnected] = useState(false);
 
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
     if (!user || !otherUserId) return;
 
-    const accounts =
-      JSON.parse(
-        localStorage.getItem("unilink_accounts")
-      ) || [];
+    let cancelled = false;
 
-    const foundUser = accounts.find(
-      (account) =>
-        String(account.id) === String(otherUserId)
-    );
+    (async () => {
+      try {
+        const result = await request(
+          `/api/users/${otherUserId}`
+        );
 
-    setOtherUser(foundUser || null);
+        if (!cancelled) {
+          setOtherUser(toClientAccount(result.user));
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setOtherUser(null);
+        }
+      }
+    })();
 
-    if (!foundUser) {
-      setLoading(false);
-      return;
-    }
-
-    const status = getConnectionStatus(
-      user.id,
-      otherUserId
-    );
-
-    if (status === "accepted") {
-      markConversationAsRead(
-        user.id,
-        otherUserId
-      );
-
-      setMessages(
-        getConversation(
-          user.id,
-          otherUserId
-        )
-      );
-    } else {
-      setMessages([]);
-    }
-
-    setLoading(false);
+    return () => {
+      cancelled = true;
+    };
   }, [user, otherUserId]);
+
+  useEffect(() => {
+    if (!user || !otherUserId) return;
+
+    let cancelled = false;
+
+    const checkConnection = async () => {
+      try {
+        const result = await request(
+          "/api/connections?status=accepted&limit=50"
+        );
+
+        const found = (result.connections ?? []).some(
+          (connection) =>
+            String(connection.user?.id) === String(otherUserId)
+        );
+
+        if (!cancelled && found) {
+          setIsConnected(true);
+        }
+      } catch {
+        // Ignore failures locally.
+      }
+    };
+
+    checkConnection();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, otherUserId]);
+
+  useEffect(() => {
+    if (!user || !otherUserId || !isConnected) return;
+
+    let cancelled = false;
+
+    const loadMessages = async () => {
+      try {
+        const result = await request(
+          `/api/messages/${otherUserId}?limit=50`
+        );
+
+        await request(`/api/messages/${otherUserId}`, {
+          method: "PATCH",
+        });
+
+        if (!cancelled) {
+          setMessages(
+            [...(result.messages ?? [])].reverse()
+          );
+          setLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setMessages([]);
+          setLoading(false);
+        }
+      }
+    };
+
+    loadMessages();
+
+    const interval = setInterval(loadMessages, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [user, otherUserId, isConnected]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({
@@ -86,85 +142,33 @@ export default function ChatPage() {
     });
   }, [messages]);
 
-  // Refresh when another tab/window changes messages
-  useEffect(() => {
-    if (!user || !otherUserId) return;
+  const handleSend = async (event) => {
+    event.preventDefault();
 
-    const refreshMessages = () => {
-      setMessages(
-        getConversation(
-          user.id,
-          otherUserId
-        )
-      );
-
-      markConversationAsRead(
-        user.id,
-        otherUserId
-      );
-    };
-
-    window.addEventListener(
-      "storage",
-      refreshMessages
-    );
-
-    // React when the connection status changes
-    // (e.g. the other person accepts the request in
-    // another tab while this chat is still open).
-    const refreshAfterConnectionChange = () => {
-      const status = getConnectionStatus(
-        user.id,
-        otherUserId
-      );
-
-      if (status === "accepted") {
-        refreshMessages();
-      }
-    };
-
-    window.addEventListener(
-      "unilink-connections-updated",
-      refreshAfterConnectionChange
-    );
-
-    return () => {
-      window.removeEventListener(
-        "storage",
-        refreshMessages
-      );
-
-      window.removeEventListener(
-        "unilink-connections-updated",
-        refreshAfterConnectionChange
-      );
-    };
-  }, [user, otherUserId]);
-
-  const handleSend = () => {
     if (!user || !otherUserId) return;
 
     if (!text.trim()) return;
 
-    const message = sendMessage({
-      senderId: user.id,
-      receiverId: otherUserId,
-      text,
-    });
-
-    if (!message) return;
-
-    setMessages((previous) => [
-      ...previous,
-      message,
-    ]);
+    const messageText = text.trim();
 
     setText("");
-  };
 
-  const handleSubmit = (event) => {
-    event.preventDefault();
-    handleSend();
+    try {
+      const result = await request("/api/messages", {
+        method: "POST",
+        body: {
+          userId: Number(otherUserId),
+          text: messageText,
+        },
+      });
+
+      setMessages((previous) => [
+        ...previous,
+        result.message,
+      ]);
+    } catch {
+      setText(messageText);
+    }
   };
 
   const formatTime = (timestamp) => {
@@ -178,17 +182,9 @@ export default function ChatPage() {
     });
   };
 
-  const profilePhoto =
-    otherUser?.profilePhoto ||
-    otherUser?.avatar;
+  const profilePhoto = otherUser?.profilePhoto || otherUser?.avatar;
 
-  const connectionStatus =
-    user && otherUserId
-      ? getConnectionStatus(
-          user.id,
-          otherUserId
-        )
-      : "none";
+  const connectionStatus = isConnected ? "accepted" : "none";
 
   if (authLoading) {
     return (
@@ -260,7 +256,7 @@ export default function ChatPage() {
           </h1>
 
           <p className="mt-2 text-sm text-slate-500">
-            This account doesn't exist anymore.
+            This account doesn&apos;t exist anymore.
           </p>
 
           <button
@@ -350,7 +346,7 @@ export default function ChatPage() {
             </div>
 
             <h2 className="mt-5 text-base font-semibold text-slate-900">
-              You're not connected
+              You&apos;re not connected
             </h2>
 
             <p className="mt-2 max-w-sm text-sm text-slate-500">
@@ -440,7 +436,7 @@ export default function ChatPage() {
 
             {/* Input */}
             <form
-              onSubmit={handleSubmit}
+              onSubmit={handleSend}
               className="sticky bottom-0 mb-3 flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"
             >
               <input

@@ -13,11 +13,7 @@ import BottomNav from "@/components/BottomNav";
 import LoginPrompt from "@/components/LoginPrompt";
 import { useAuth } from "@/context/AuthContext";
 
-import {
-  getIncomingRequests,
-  acceptConnectionRequest,
-  rejectConnectionRequest,
-} from "@/utils/connectionStorage";
+import { request } from "@/lib/api-client";
 
 export default function ConnectionsPage() {
   const router = useRouter();
@@ -35,7 +31,7 @@ export default function ConnectionsPage() {
   const [processingRequestId, setProcessingRequestId] =
     useState(null);
 
-  const loadRequests = () => {
+  const loadRequests = async () => {
     if (!user?.id) {
       setRequests([]);
       setAccounts([]);
@@ -43,46 +39,49 @@ export default function ConnectionsPage() {
     }
 
     try {
-      const savedAccounts =
-        JSON.parse(
-          localStorage.getItem("unilink_accounts")
-        ) || [];
-
-      const incomingRequests =
-        getIncomingRequests(user.id);
-
-      setAccounts(
-        Array.isArray(savedAccounts)
-          ? savedAccounts
-          : []
+      const result = await request(
+        "/api/connections?status=incoming&limit=50"
       );
 
-      setRequests(
-        Array.isArray(incomingRequests)
-          ? incomingRequests
-          : []
-      );
-    } catch (error) {
-      console.error(
-        "Failed to load connection requests:",
-        error
+      const incoming = (result.connections ?? []).map(
+        (connection) => {
+          const sender = connection.user ?? {};
+          const profile = sender.profile ?? {};
+
+          return {
+            id: connection.id,
+            senderId: sender.id,
+            sender: {
+              id: sender.id,
+              name: sender.fullName || "Student",
+              profilePhoto: sender.profilePhoto ?? "",
+              avatar: sender.profilePhoto ?? "",
+              department:
+                profile.department || "Student",
+              branch: profile.department || "Student",
+              course: profile.department || "Student",
+              year: profile.year || "",
+              studyYear: profile.year || "",
+              accountType: sender.accountType || "student",
+            },
+          };
+        }
       );
 
+      setAccounts(incoming.map((request) => request.sender));
+      setRequests(incoming);
+    } catch {
       setAccounts([]);
       setRequests([]);
     }
   };
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || !user) return;
 
-    if (!user) {
-      setRequests([]);
-      setAccounts([]);
-      return;
-    }
-
-    loadRequests();
+    void (async () => {
+      await loadRequests();
+    })();
   }, [user, loading]);
 
   /*
@@ -97,23 +96,13 @@ export default function ConnectionsPage() {
     };
 
     window.addEventListener(
-      "unilink-connections-updated",
-      handleConnectionsUpdated
-    );
-
-    window.addEventListener(
-      "storage",
+      "focus",
       handleConnectionsUpdated
     );
 
     return () => {
       window.removeEventListener(
-        "unilink-connections-updated",
-        handleConnectionsUpdated
-      );
-
-      window.removeEventListener(
-        "storage",
+        "focus",
         handleConnectionsUpdated
       );
     };
@@ -129,7 +118,7 @@ export default function ConnectionsPage() {
     );
   };
 
-  const handleAccept = (requestId) => {
+  const handleAccept = async (requestId) => {
     if (
       !user?.id ||
       !requestId ||
@@ -149,39 +138,26 @@ export default function ConnectionsPage() {
     setProcessingRequestId(requestId);
 
     try {
-      const result =
-        acceptConnectionRequest(requestId);
+      await request(`/api/connections/${requestId}`, {
+        method: "PATCH",
+        body: { action: "accept" },
+      });
 
-      /*
-       * Remove the request immediately from the UI.
-       * The storage function is responsible for changing
-       * the connection to accepted and creating the
-       * acceptance notification.
-       */
-      if (result !== false) {
-        setRequests((previous) =>
-          previous.filter(
-            (item) =>
-              String(item.id) !==
-              String(requestId)
-          )
-        );
-      } else {
-        loadRequests();
-      }
-    } catch (error) {
-      console.error(
-        "Failed to accept connection request:",
-        error
+      setRequests((previous) =>
+        previous.filter(
+          (item) =>
+            String(item.id) !==
+            String(requestId)
+        )
       );
-
+    } catch {
       loadRequests();
     } finally {
       setProcessingRequestId(null);
     }
   };
 
-  const handleReject = (requestId) => {
+  const handleReject = async (requestId) => {
     if (
       !user?.id ||
       !requestId ||
@@ -201,30 +177,19 @@ export default function ConnectionsPage() {
     setProcessingRequestId(requestId);
 
     try {
-      const result =
-        rejectConnectionRequest(requestId);
+      await request(`/api/connections/${requestId}`, {
+        method: "PATCH",
+        body: { action: "reject" },
+      });
 
-      /*
-       * Reject removes the pending request from storage.
-       * Update the UI immediately as well.
-       */
-      if (result !== false) {
-        setRequests((previous) =>
-          previous.filter(
-            (item) =>
-              String(item.id) !==
-              String(requestId)
-          )
-        );
-      } else {
-        loadRequests();
-      }
-    } catch (error) {
-      console.error(
-        "Failed to reject connection request:",
-        error
+      setRequests((previous) =>
+        previous.filter(
+          (item) =>
+            String(item.id) !==
+            String(requestId)
+        )
       );
-
+    } catch {
       loadRequests();
     } finally {
       setProcessingRequestId(null);

@@ -31,6 +31,7 @@ describe("auth validators", () => {
       fullName: "Ada Lovelace",
       email: "ada@example.com",
       password: "longenough",
+      accountType: "student",
     });
   });
 

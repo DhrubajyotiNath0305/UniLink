@@ -40,7 +40,7 @@ function LoginPrompt({ isOpen, onClose }) {
         <h2 className="text-[19px]">Login required</h2>
 
         <p className="mx-auto my-2 mb-[20px] max-w-[260px] text-slate-500 text-[11px] leading-[1.5]">
-          You're not logged in. Log in or create an account
+          You&apos;re not logged in. Log in or create an account
           to continue.
         </p>
 

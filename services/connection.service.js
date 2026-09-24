@@ -2,6 +2,16 @@ import { and, count, desc, eq, or } from "drizzle-orm";
 import { db } from "@/db";
 import { connections, profiles, users } from "@/db/schema";
 import { ApiError } from "@/lib/api-error";
+import { createNotification } from "./notification.service";
+
+async function getUserName(userId) {
+  const row = await db
+    .select({ fullName: users.fullName })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return row[0]?.fullName ?? "A user";
+}
 
 function pairKey(a, b) {
   return [a, b].sort((x, y) => x - y).join(":");
@@ -16,6 +26,9 @@ function serializePeerRow(row, connectionIdColumn) {
     user: {
       id: row.peerId,
       fullName: row.peerFullName,
+      username: row.peerUsername ?? null,
+      accountType: row.peerAccountType ?? "student",
+      profilePhoto: row.peerProfilePhoto ?? null,
       profile:
         row.peerBio || row.peerDepartment || row.peerYear
           ? {
@@ -46,6 +59,9 @@ const peerSelect = {
   updatedAt: connections.updatedAt,
   peerId: users.id,
   peerFullName: users.fullName,
+  peerUsername: users.username,
+  peerAccountType: users.accountType,
+  peerProfilePhoto: users.profilePhoto,
   peerBio: profiles.bio,
   peerDepartment: profiles.department,
   peerYear: profiles.year,
@@ -87,6 +103,14 @@ export async function sendConnectionRequest(requesterId, addresseeId) {
         status: "pending",
       })
       .returning();
+    const requesterName = await getUserName(requesterId);
+    await createNotification({
+      userId: addresseeId,
+      senderId: requesterId,
+      type: "connection",
+      message: `${requesterName} sent you a connection request.`,
+      link: "/connections",
+    });
     return toPublicConnection(row);
   }
 
@@ -106,6 +130,14 @@ export async function sendConnectionRequest(requesterId, addresseeId) {
     .set({ requesterId, addresseeId, status: "pending", updatedAt: Date.now() })
     .where(eq(connections.id, existing.id))
     .returning();
+  const requesterName = await getUserName(requesterId);
+  await createNotification({
+    userId: addresseeId,
+    senderId: requesterId,
+    type: "connection",
+    message: `${requesterName} sent you a connection request.`,
+    link: "/connections",
+  });
   return toPublicConnection(updated);
 }
 
@@ -125,6 +157,14 @@ export async function acceptConnectionRequest(userId, connectionId) {
     .set({ status: "accepted", updatedAt: Date.now() })
     .where(eq(connections.id, connectionId))
     .returning();
+  const addresseeName = await getUserName(row.addresseeId);
+  await createNotification({
+    userId: row.requesterId,
+    senderId: row.addresseeId,
+    type: "connection",
+    message: `${addresseeName} accepted your connection request.`,
+    link: "/connections",
+  });
   return toPublicConnection(updated);
 }
 

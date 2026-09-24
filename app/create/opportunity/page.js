@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { saveOpportunity } from "../../../utils/opportunityStorage";
+import { request } from "@/lib/api-client";
 
 export default function CreateOpportunity() {
   const router = useRouter();
@@ -23,6 +23,8 @@ export default function CreateOpportunity() {
   const [description, setDescription] = useState("");
   const [link, setLink] = useState("");
   const [banner, setBanner] = useState(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState("");
 
   /*
    * Compress the selected image before storing it.
@@ -105,7 +107,7 @@ export default function CreateOpportunity() {
     reader.readAsDataURL(file);
   };
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (
       !title.trim() ||
       !date ||
@@ -115,8 +117,6 @@ export default function CreateOpportunity() {
     }
 
     const opportunity = {
-      id: Date.now(),
-
       title: title.trim(),
 
       type:
@@ -126,8 +126,6 @@ export default function CreateOpportunity() {
 
       date,
 
-      // IMPORTANT:
-      // Save the compressed image.
       banner: banner || null,
 
       location: location.trim(),
@@ -137,17 +135,24 @@ export default function CreateOpportunity() {
       link: link.trim(),
     };
 
-    const saved = saveOpportunity(opportunity);
+    try {
+      setPublishing(true);
+      setPublishError("");
 
-    if (!saved) {
-      alert(
-        "Unable to save this opportunity. The browser storage is full. Try removing older opportunities or using a smaller image."
+      await request("/api/opportunities", {
+        method: "POST",
+        body: opportunity,
+      });
+
+      router.push("/search");
+    } catch (err) {
+      setPublishError(
+        err?.message ||
+          "Could not publish this opportunity. Please try again."
       );
-
-      return;
+    } finally {
+      setPublishing(false);
     }
-
-    router.push("/search");
   };
 
   const isValid =
@@ -176,11 +181,17 @@ export default function CreateOpportunity() {
           type="button"
           className="rounded-[10px] bg-indigo-500 px-[15px] py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           onClick={handlePublish}
-          disabled={!isValid}
+          disabled={!isValid || publishing}
         >
-          Publish
+          {publishing ? "Publishing..." : "Publish"}
         </button>
       </header>
+
+      {publishError && (
+        <p className="px-4 pt-3 text-center text-xs font-medium text-red-500">
+          {publishError}
+        </p>
+      )}
 
       <main className="px-4 pt-5 pb-[100px]">
         {/* INTRO CARD */}

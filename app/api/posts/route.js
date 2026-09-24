@@ -6,12 +6,12 @@ import { createPostSchema, postListQuerySchema } from "@/validators/post";
 
 export async function GET(request) {
   try {
-    await requireUser();
+    const { userId } = await requireUser();
     const query = validate(
       postListQuerySchema,
       Object.fromEntries(request.nextUrl.searchParams.entries())
     );
-    const result = await listPosts(query);
+    const result = await listPosts({ ...query, viewerId: userId });
     return ok(result);
   } catch (err) {
     return handleApiError(err);
@@ -30,7 +30,7 @@ export async function POST(request) {
     }
 
     const data = validate(createPostSchema, body);
-    const post = await createPost(userId, data.content);
+    const post = await createPost(userId, data);
     return ok({ post }, 201);
   } catch (err) {
     return handleApiError(err);

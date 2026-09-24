@@ -6,9 +6,9 @@ import { postParamsSchema, updatePostSchema } from "@/validators/post";
 
 export async function GET(request, { params }) {
   try {
-    await requireUser();
+    const { userId } = await requireUser();
     const { id } = validate(postParamsSchema, await params);
-    const post = await getPublicPostById(id);
+    const post = await getPublicPostById(id, { viewerId: userId });
     return ok({ post });
   } catch (err) {
     return handleApiError(err);

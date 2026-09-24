@@ -14,22 +14,55 @@ import {
 
 import LoginPrompt from "./LoginPrompt";
 import { useAuth } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
-function PostCard({
-  name,
-  branch,
-  year,
-  time,
-  content,
-  likes,
-  comments,
-  image,
-  avatar,
-}) {
-  const { isLoggedIn } = useAuth();
+function timeAgo(createdAt) {
+  if (!createdAt) return "";
 
-  const [liked, setLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(Number(likes) || 0);
+  const seconds = Math.floor((Date.now() - createdAt) / 1000);
+
+  if (seconds < 60) return "Just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function postAuthor(post) {
+  return post?.author ?? {};
+}
+
+function postName(post) {
+  const author = postAuthor(post);
+  return author.fullName || "Student";
+}
+
+function postAvatar(post) {
+  const author = postAuthor(post);
+  return (
+    author.profilePhoto ||
+    `https://i.pravatar.cc/100?u=${author.id || "user"}`
+  );
+}
+
+function postBranch(post) {
+  const author = postAuthor(post);
+  return author.profile?.department || "Student";
+}
+
+function postYear(post) {
+  const author = postAuthor(post);
+  return author.profile?.year || "";
+}
+
+function PostCard({ post }) {
+  const { user, isLoggedIn } = useAuth();
+
+  const [liked, setLiked] = useState(Boolean(post.isLiked));
+  const [likeCount, setLikeCount] = useState(Number(post.likes) || 0);
+  const [commentCount, setCommentCount] = useState(
+    Number(post.comments) || 0
+  );
 
   const [bookmarked, setBookmarked] = useState(false);
 
@@ -39,8 +72,16 @@ function PostCard({
 
   const [commentText, setCommentText] = useState("");
   const [commentList, setCommentList] = useState([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentError, setCommentError] = useState("");
 
   const [copied, setCopied] = useState(false);
+
+  const name = postName(post);
+  const branch = postBranch(post);
+  const year = postYear(post);
+  const avatar = postAvatar(post);
+  const time = timeAgo(post.createdAt);
 
   const requireLogin = () => {
     if (!isLoggedIn) {
@@ -51,18 +92,20 @@ function PostCard({
     return false;
   };
 
-  const handleLike = () => {
+  const handleLike = async () => {
     if (requireLogin()) return;
 
-    setLiked((previous) => {
-      if (previous) {
-        setLikeCount((count) => Math.max(0, count - 1));
-      } else {
-        setLikeCount((count) => count + 1);
-      }
+    try {
+      const result = await request(
+        `/api/posts/${post.id}/like`,
+        { method: "POST" }
+      );
 
-      return !previous;
-    });
+      setLiked(result.liked);
+      setLikeCount(result.likes);
+    } catch {
+      // Ignore and keep previous state.
+    }
   };
 
   const handleBookmark = () => {
@@ -71,28 +114,46 @@ function PostCard({
     setBookmarked((previous) => !previous);
   };
 
-  const handleComment = () => {
+  const handleComment = async () => {
     if (requireLogin()) return;
 
     setShowComments(true);
+
+    try {
+      setCommentsLoading(true);
+
+      const result = await request(
+        `/api/posts/${post.id}/comments`
+      );
+
+      setCommentList(result.comments ?? []);
+    } catch {
+      setCommentList([]);
+    } finally {
+      setCommentsLoading(false);
+    }
   };
 
-  const handleAddComment = () => {
+  const handleAddComment = async () => {
     if (requireLogin()) return;
 
     const text = commentText.trim();
 
     if (!text) return;
 
-    setCommentList((previous) => [
-      ...previous,
-      {
-        id: Date.now(),
-        text,
-      },
-    ]);
+    try {
+      const comment = await request(
+        `/api/posts/${post.id}/comments`,
+        { method: "POST", body: { content: text } }
+      );
 
-    setCommentText("");
+      setCommentList((previous) => [...previous, comment]);
+      setCommentCount((count) => count + 1);
+      setCommentText("");
+      setCommentError("");
+    } catch {
+      setCommentError("Could not add comment. Try again.");
+    }
   };
 
   const handleShare = () => {
@@ -103,9 +164,7 @@ function PostCard({
 
   const handleCopyLink = async () => {
     try {
-      await navigator.clipboard.writeText(
-        window.location.href
-      );
+      await navigator.clipboard.writeText(window.location.href);
 
       setCopied(true);
 
@@ -162,15 +221,15 @@ function PostCard({
         {/* POST CONTENT */}
         <div className="mt-[14px] pb-1">
           <p className="text-slate-900 text-sm leading-[1.55] [overflow-wrap:anywhere]">
-            {content}
+            {post.content}
           </p>
         </div>
 
         {/* POST IMAGE */}
-        {image && (
+        {post.image && (
           <img
             className="mt-3 block aspect-[16/10] w-full max-h-[600px] rounded-[14px] object-cover max-md:max-h-[500px] lg:max-h-[650px] lg:aspect-[4/5]"
-            src={image}
+            src={post.image}
             alt="Post"
           />
         )}
@@ -206,10 +265,7 @@ function PostCard({
             >
               <MessageCircle size={20} />
 
-              <span>
-                {(Number(comments) || 0) +
-                  commentList.length}
-              </span>
+              <span>{commentCount}</span>
             </button>
 
             {/* SHARE */}
@@ -269,7 +325,11 @@ function PostCard({
             {/* COMMENTS */}
             <div className="min-h-[180px] flex-1 overflow-y-auto px-5 py-4">
 
-              {commentList.length === 0 ? (
+              {commentsLoading ? (
+                <p className="py-10 text-center text-sm text-slate-400">
+                  Loading comments...
+                </p>
+              ) : commentList.length === 0 ? (
                 <div className="flex min-h-[180px] items-center justify-center text-center">
                   <div>
                     <MessageCircle
@@ -278,7 +338,7 @@ function PostCard({
                     />
 
                     <p className="mt-3 text-sm font-medium text-slate-600">
-                      No new comments
+                      No comments yet
                     </p>
 
                     <p className="mt-1 text-xs text-slate-400">
@@ -293,17 +353,27 @@ function PostCard({
                       key={comment.id}
                       className="flex gap-3"
                     >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-xs font-bold text-indigo-500">
-                        Y
+                      <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-indigo-50 text-xs font-bold text-indigo-500">
+                        {comment.author?.profilePhoto ? (
+                          <img
+                            className="size-full object-cover"
+                            src={comment.author.profilePhoto}
+                            alt={comment.author.fullName || "User"}
+                          />
+                        ) : (
+                          (comment.author?.fullName || "U")
+                            .charAt(0)
+                            .toUpperCase()
+                        )}
                       </div>
 
                       <div className="rounded-2xl bg-slate-100 px-4 py-2.5">
                         <p className="text-xs font-semibold text-slate-800">
-                          You
+                          {comment.author?.fullName || "User"}
                         </p>
 
                         <p className="mt-1 text-sm text-slate-700">
-                          {comment.text}
+                          {comment.content}
                         </p>
                       </div>
                     </div>
@@ -314,6 +384,12 @@ function PostCard({
 
             {/* COMMENT INPUT */}
             <div className="border-t border-slate-100 p-4">
+              {commentError && (
+                <p className="mb-2 text-xs text-red-500">
+                  {commentError}
+                </p>
+              )}
+
               <div className="flex items-end gap-2">
                 <textarea
                   value={commentText}
@@ -375,7 +451,7 @@ function PostCard({
 
             <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-3">
               <p className="line-clamp-3 text-sm text-slate-700">
-                {content}
+                {post.content}
               </p>
             </div>
 

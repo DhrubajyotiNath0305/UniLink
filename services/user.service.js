@@ -20,6 +20,16 @@ export function toPublicUser(user, { withEmail = false } = {}) {
   const result = {
     id: user.id,
     fullName: user.fullName,
+    username: user.username ?? null,
+    accountType: user.accountType ?? "student",
+    profilePhoto: user.profilePhoto ?? null,
+    github: user.github ?? null,
+    linkedin: user.linkedin ?? null,
+    location: user.location ?? null,
+    college: user.college ?? null,
+    graduationYear: user.graduationYear ?? null,
+    currentRole: user.currentRole ?? null,
+    company: user.company ?? null,
     profile: profile
       ? { bio: profile.bio, department: profile.department, year: profile.year }
       : null,
@@ -41,6 +51,9 @@ function serializeSearchRow(row) {
   return {
     id: row.id,
     fullName: row.fullName,
+    username: row.username ?? null,
+    accountType: row.accountType ?? "student",
+    profilePhoto: row.profilePhoto ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     profile,
@@ -71,7 +84,7 @@ export async function getUserByEmail(email) {
   });
 }
 
-export async function createUser({ email, fullName, password }) {
+export async function createUser({ email, fullName, password, ...fields }) {
   const normalizedEmail = normalizeEmail(email);
   const existing = await db.query.users.findFirst({
     where: (u, { eq }) => eq(u.email, normalizedEmail),
@@ -83,26 +96,73 @@ export async function createUser({ email, fullName, password }) {
   const passwordHash = await hashPassword(password);
   const [user] = await db
     .insert(users)
-    .values({ email: normalizedEmail, fullName, passwordHash })
+    .values({
+      email: normalizedEmail,
+      fullName,
+      passwordHash,
+      username: fields.username ?? null,
+      accountType: fields.accountType ?? "student",
+      graduationYear: fields.graduationYear ?? null,
+      currentRole: fields.currentRole ?? null,
+      company: fields.company ?? null,
+    })
     .returning();
 
-  await db.insert(profiles).values({ userId: user.id }).run();
+  await db
+    .insert(profiles)
+    .values({
+      userId: user.id,
+      department: fields.department ?? null,
+      year: fields.year ?? null,
+    })
+    .run();
   const created = await getUserById(user.id);
   return created;
 }
 
+const ACTIVE_USER_PROFILE_FIELDS = [
+  "fullName",
+  "username",
+  "accountType",
+  "profilePhoto",
+  "github",
+  "linkedin",
+  "location",
+  "college",
+  "graduationYear",
+  "currentRole",
+  "company",
+];
+
+const PASSIVE_PROFILE_FIELDS = ["bio", "department", "year"];
+
 export async function updateOwnProfile(userId, data) {
-  const patch = {
-    ...(data.bio !== undefined ? { bio: data.bio } : {}),
-    ...(data.department !== undefined ? { department: data.department } : {}),
-    ...(data.year !== undefined ? { year: data.year } : {}),
-  };
+  const userPatch = {};
+  for (const key of ACTIVE_USER_PROFILE_FIELDS) {
+    if (data[key] !== undefined) {
+      userPatch[key] = key === "accountType" ? (data[key] ?? "student") : (data[key] ?? null);
+    }
+  }
+
+  const profilePatch = {};
+  for (const key of PASSIVE_PROFILE_FIELDS) {
+    if (data[key] !== undefined) {
+      profilePatch[key] = data[key];
+    }
+  }
 
   await db.transaction(async (tx) => {
-    if (Object.keys(patch).length > 0) {
+    if (Object.keys(userPatch).length > 0) {
+      await tx
+        .update(users)
+        .set({ ...userPatch, updatedAt: Date.now() })
+        .where(eq(users.id, userId));
+    }
+
+    if (Object.keys(profilePatch).length > 0) {
       await tx
         .update(profiles)
-        .set({ ...patch, updatedAt: Date.now() })
+        .set({ ...profilePatch, updatedAt: Date.now() })
         .where(eq(profiles.userId, userId));
     }
 
@@ -169,7 +229,7 @@ function likeCondition(column, value) {
   return sql`${column} like ${pattern} escape '\\'`;
 }
 
-export async function searchUsers({ query, page, limit }) {
+export async function searchUsers({ query, page, limit, accountType }) {
   const conditions = [];
   if (query) {
     conditions.push(
@@ -179,12 +239,18 @@ export async function searchUsers({ query, page, limit }) {
       )
     );
   }
+  if (accountType) {
+    conditions.push(eq(users.accountType, accountType));
+  }
   const where = conditions.length ? and(...conditions) : undefined;
 
   const rows = await db
     .select({
       id: users.id,
       fullName: users.fullName,
+      username: users.username,
+      accountType: users.accountType,
+      profilePhoto: users.profilePhoto,
       createdAt: users.createdAt,
       updatedAt: users.updatedAt,
       bio: profiles.bio,

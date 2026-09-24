@@ -19,14 +19,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import BottomNav from "@/components/BottomNav";
 import LoginPrompt from "@/components/LoginPrompt";
-import { useAuth } from "@/context/AuthContext";
+import { toClientUser, useAuth } from "@/context/AuthContext";
 
-import {
-  getConnectionStatus,
-  sendConnectionRequest,
-} from "@/utils/connectionStorage";
-
-import { getProjects } from "@/utils/projectStorage";
+import { request } from "@/lib/api-client";
 
 export default function ProfilePage() {
   return (
@@ -68,6 +63,9 @@ function ProfileContent() {
 
   const [projects, setProjects] = useState([]);
 
+  const [connectionCount, setConnectionCount] =
+    useState(0);
+
   const [connectionStatus, setConnectionStatus] =
     useState(() => (isOwnProfile ? "self" : "none"));
 
@@ -78,56 +76,91 @@ function ProfileContent() {
    * LOAD PROFILE
    */
   useEffect(() => {
-    if (!isLoggedIn || !user) {
-      setProfile(null);
-      setProjects([]);
-      setConnectionStatus("none");
-      return;
-    }
+    let cancelled = false;
 
-    if (isOwnProfile) {
-      setProfile(user);
-      setConnectionStatus("self");
-
-      const userProjects = getProjects(user.id);
-      setProjects(userProjects);
-
-      return;
-    }
-
-    try {
-      const accounts =
-        JSON.parse(
-          localStorage.getItem("unilink_accounts")
-        ) || [];
-
-      const otherUser = accounts.find(
-        (account) =>
-          String(account.id) === String(profileId)
-      );
-
-      setProfile(otherUser || null);
-
-      if (otherUser) {
-        setConnectionStatus(
-          getConnectionStatus(
-            user.id,
-            otherUser.id
-          )
-        );
-
-        const otherUserProjects = getProjects(
-          otherUser.id
-        );
-
-        setProjects(otherUserProjects);
-      } else {
-        setProjects([]);
+    const loadAll = async () => {
+      if (!isLoggedIn || !user) {
+        if (!cancelled) {
+          setProfile(null);
+          setProjects([]);
+          setConnectionStatus("none");
+          setConnectionCount(0);
+        }
+        return;
       }
-    } catch {
-      setProfile(null);
-      setProjects([]);
-    }
+
+      const targetId = isOwnProfile ? user.id : profileId;
+
+      try {
+        const [
+          accepted,
+          incoming,
+          outgoing,
+          projectsResult,
+          profileResult,
+        ] = await Promise.all([
+          request("/api/connections?limit=50"),
+          request("/api/connections?status=incoming&limit=50"),
+          request("/api/connections?status=outgoing&limit=50"),
+          targetId != null
+            ? request(
+                `/api/projects?ownerId=${targetId}&limit=50`
+              )
+            : Promise.resolve({ projects: [] }),
+          !isOwnProfile && profileId != null
+            ? request(`/api/users/${profileId}`)
+            : Promise.resolve(null),
+        ]);
+
+        if (cancelled) return;
+
+        let nextStatus = "none";
+
+        if (isOwnProfile) {
+          nextStatus = "self";
+        } else {
+          const has = (list) =>
+            (list?.connections ?? []).some(
+              (connection) =>
+                String(connection.user?.id) ===
+                String(profileId)
+            );
+
+          if (has(accepted)) {
+            nextStatus = "accepted";
+          } else if (
+            has(outgoing) ||
+            has(incoming)
+          ) {
+            nextStatus = "pending";
+          }
+        }
+
+        setConnectionStatus(nextStatus);
+        setConnectionCount(
+          (accepted?.connections ?? []).length
+        );
+        setProjects(projectsResult.projects ?? []);
+        setProfile(
+          isOwnProfile
+            ? user
+            : toClientUser(profileResult?.user ?? null)
+        );
+      } catch {
+        if (!cancelled) {
+          setProfile(null);
+          setProjects([]);
+          setConnectionStatus("none");
+          setConnectionCount(0);
+        }
+      }
+    };
+
+    loadAll();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     user,
     isLoggedIn,
@@ -143,36 +176,30 @@ function ProfileContent() {
   useEffect(() => {
     if (!user || !isLoggedIn) return;
 
-    const refreshProjects = () => {
+    const refreshProjects = async () => {
       const targetId = isOwnProfile
         ? user.id
         : profileId;
 
-      if (targetId != null) {
-        setProjects(getProjects(targetId));
+      if (targetId == null) return;
+
+      try {
+        const result = await request(
+          `/api/projects?ownerId=${targetId}&limit=50`
+        );
+
+        setProjects(result.projects ?? []);
+      } catch {
+        // Keep the previous list on error.
       }
     };
 
-    window.addEventListener(
-      "focus",
-      refreshProjects
-    );
+    const handleFocus = () => refreshProjects();
 
-    window.addEventListener(
-      "unilink-projects-updated",
-      refreshProjects
-    );
+    window.addEventListener("focus", handleFocus);
 
     return () => {
-      window.removeEventListener(
-        "focus",
-        refreshProjects
-      );
-
-      window.removeEventListener(
-        "unilink-projects-updated",
-        refreshProjects
-      );
+      window.removeEventListener("focus", handleFocus);
     };
   }, [
     user,
@@ -192,15 +219,19 @@ function ProfileContent() {
   /*
    * CONNECT
    */
-  const handleConnect = () => {
+  const handleConnect = async () => {
     if (!user || !profile) return;
 
-    sendConnectionRequest(
-      user.id,
-      profile.id
-    );
+    try {
+      await request("/api/connections", {
+        method: "POST",
+        body: { userId: profile.id },
+      });
 
-    setConnectionStatus("pending");
+      setConnectionStatus("pending");
+    } catch {
+      // Leave the current status untouched on error.
+    }
   };
 
   /*
@@ -335,15 +366,9 @@ function ProfileContent() {
 
   /*
    * NOTE:
-   * Projects now come from projectStorage,
+   * Projects now come from the API,
    * not from profile.projects.
    */
-
-  const connections = Array.isArray(
-    profile.connections
-  )
-    ? profile.connections
-    : [];
 
   const github =
     profile.github ||
@@ -527,7 +552,7 @@ function ProfileContent() {
 
                 <div className="flex flex-col items-center">
                   <strong className="text-lg font-bold text-slate-900">
-                    {connections.length}
+                    {connectionCount}
                   </strong>
 
                   <span className="mt-1 text-xs text-slate-500">
@@ -682,10 +707,10 @@ function ProfileContent() {
 
                 {skills.map((skill, index) => (
                   <span
-                    key={`${skill}-${index}`}
+                    key={`${skill?.name ?? skill}-${index}`}
                     className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-medium text-slate-700"
                   >
-                    {skill}
+                    {skill?.name ?? skill}
                   </span>
                 ))}
 
@@ -716,7 +741,7 @@ function ProfileContent() {
                   </h3>
 
                   <p className="text-xs text-slate-500">
-                    Projects they've worked on
+                    Projects they&apos;ve worked on
                   </p>
                 </div>
 

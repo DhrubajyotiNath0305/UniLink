@@ -12,11 +12,7 @@ import {
 import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/context/AuthContext";
 
-import {
-  getIncomingRequests,
-  acceptConnectionRequest,
-  rejectConnectionRequest,
-} from "@/utils/connectionStorage";
+import { request } from "@/lib/api-client";
 
 export default function RequestsPage() {
   const router = useRouter();
@@ -34,44 +30,61 @@ export default function RequestsPage() {
     loadRequests();
   }, [user]);
 
-  const loadRequests = () => {
+  async function loadRequests() {
     if (!user) return;
 
-    const incoming =
-      getIncomingRequests(user.id);
+    try {
+      const result = await request(
+        "/api/connections?status=incoming&limit=50"
+      );
 
-    const accounts =
-      JSON.parse(
-        localStorage.getItem("unilink_accounts")
-      ) || [];
+      const requestUsers = (result.connections ?? []).map(
+        (connection) => {
+          const sender = connection.user ?? {};
+          const profile = sender.profile ?? {};
 
-    const requestUsers = incoming
-      .map((request) => {
-        const sender = accounts.find(
-          (account) =>
-            String(account.id) ===
-            String(request.senderId)
-        );
+          return {
+            id: connection.id,
+            sender: {
+              id: sender.id,
+              name: sender.fullName || "Student",
+              profilePhoto: sender.profilePhoto ?? "",
+              department: profile.department || "Student",
+              year: profile.year || "",
+            },
+          };
+        }
+      );
 
-        if (!sender) return null;
-
-        return {
-          ...request,
-          sender,
-        };
-      })
-      .filter(Boolean);
-
-    setRequests(requestUsers);
+      setRequests(requestUsers);
+    } catch {
+      setRequests([]);
+    }
   };
 
-  const handleAccept = (id) => {
-    acceptConnectionRequest(id);
+  const handleAccept = async (id) => {
+    try {
+      await request(`/api/connections/${id}`, {
+        method: "PATCH",
+        body: { action: "accept" },
+      });
+    } catch {
+      // Ignore; reload below keeps the UI in sync.
+    }
+
     loadRequests();
   };
 
-  const handleReject = (id) => {
-    rejectConnectionRequest(id);
+  const handleReject = async (id) => {
+    try {
+      await request(`/api/connections/${id}`, {
+        method: "PATCH",
+        body: { action: "reject" },
+      });
+    } catch {
+      // Ignore; reload below keeps the UI in sync.
+    }
+
     loadRequests();
   };
 
@@ -149,7 +162,7 @@ export default function RequestsPage() {
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                You're all caught up.
+                You&apos;re all caught up.
               </p>
 
             </div>

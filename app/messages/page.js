@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   MessageCircle,
@@ -13,84 +13,105 @@ import { useRouter } from "next/navigation";
 import BottomNav from "@/components/BottomNav";
 import LoginPrompt from "@/components/LoginPrompt";
 import { useAuth } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
-import {
-  getConversationUserIds,
-  getLatestMessage,
-  getUnreadFromUser,
-} from "@/utils/messageStorage";
+function toClientAccount(apiUser) {
+  if (!apiUser) return null;
+
+  const profile = apiUser.profile ?? {};
+
+  return {
+    id: apiUser.id,
+    name: apiUser.fullName,
+    username: apiUser.username ?? "",
+    department: profile.department ?? "",
+    year: profile.year ?? "",
+    profilePhoto: "",
+    avatar: "",
+  };
+}
 
 export default function MessagesPage() {
   const router = useRouter();
   const { user, isLoggedIn, loading } = useAuth();
 
-  const [accounts, setAccounts] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [search, setSearch] = useState("");
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [newMessageSearch, setNewMessageSearch] = useState("");
-
-  const loadConversations = () => {
-    if (!user) return;
-
-    const savedAccounts =
-      JSON.parse(localStorage.getItem("unilink_accounts")) || [];
-
-    setAccounts(savedAccounts);
-
-    const userIds = getConversationUserIds(user.id);
-
-    const data = userIds
-      .map((userId) => {
-        const account = savedAccounts.find(
-          (item) => String(item.id) === String(userId)
-        );
-
-        if (!account) return null;
-
-        const latestMessage = getLatestMessage(user.id, userId);
-
-        const unreadCount = getUnreadFromUser(
-          user.id,
-          userId
-        );
-
-        return {
-          account,
-          latestMessage,
-          unreadCount,
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => {
-        const timeA = Number(
-          a.latestMessage?.createdAt || 0
-        );
-
-        const timeB = Number(
-          b.latestMessage?.createdAt || 0
-        );
-
-        return timeB - timeA;
-      });
-
-    setConversations(data);
-  };
+  const [people, setPeople] = useState([]);
 
   useEffect(() => {
     if (!user) return;
 
-    loadConversations();
+    let cancelled = false;
 
-    const handleStorage = () => {
-      loadConversations();
+    const loadConversations = async () => {
+      try {
+        const result = await request("/api/messages?limit=50");
+
+        if (cancelled) return;
+
+        const data = (result.conversations ?? [])
+          .map((conversation) => ({
+            account: toClientAccount(conversation.user),
+            latestMessage: conversation.latestMessage,
+            unreadCount: conversation.unreadCount,
+          }))
+          .filter((item) => item.account)
+          .sort((a, b) => {
+            const timeA = Number(
+              a.latestMessage?.createdAt || 0
+            );
+
+            const timeB = Number(
+              b.latestMessage?.createdAt || 0
+            );
+
+            return timeB - timeA;
+          });
+
+        setConversations(data);
+      } catch {
+        if (!cancelled) {
+          setConversations([]);
+        }
+      }
     };
 
-    window.addEventListener("storage", handleStorage);
+    loadConversations();
 
     return () => {
-      window.removeEventListener("storage", handleStorage);
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const result = await request(
+          "/api/users?accountType=student&limit=50"
+        );
+
+        if (!cancelled) {
+          setPeople(
+            (result.users ?? []).map(toClientAccount)
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setPeople([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
     };
   }, [user]);
 
@@ -129,23 +150,13 @@ export default function MessagesPage() {
       );
     });
 
-  const availablePeople = useMemo(() => {
-    const conversationIds = new Set(
-      conversations.map(({ account }) => String(account.id))
-    );
+  const filteredPeople = people.filter((account) => {
+    if (!user) return false;
 
-    return accounts.filter((account) => {
-      if (!user) return false;
+    if (String(account.id) === String(user.id)) {
+      return false;
+    }
 
-      if (String(account.id) === String(user.id)) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [accounts, conversations, user]);
-
-  const filteredPeople = availablePeople.filter((account) => {
     const query = newMessageSearch.trim().toLowerCase();
 
     if (!query) return true;

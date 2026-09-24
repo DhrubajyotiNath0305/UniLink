@@ -4,27 +4,50 @@ import { useState } from "react";
 import { ArrowLeft, Image, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
+import { request } from "@/lib/api-client";
+
 export default function CreateStory() {
   const router = useRouter();
 
   const [image, setImage] = useState(null);
+  const [publishError, setPublishError] = useState("");
+  const [publishing, setPublishing] = useState(false);
 
   const handleImageChange = (event) => {
     const file = event.target.files[0];
 
-    if (file) {
-      setImage(URL.createObjectURL(file));
-    }
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      setImage(reader.result);
+    };
+
+    reader.readAsDataURL(file);
   };
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (!image) {
       return;
     }
 
-    console.log("Story published:", image);
+    setPublishError("");
 
-    router.push("/");
+    try {
+      setPublishing(true);
+
+      await request("/api/stories", {
+        method: "POST",
+        body: { image },
+      });
+
+      router.push("/");
+    } catch {
+      setPublishError("Could not publish your story. Please try again.");
+    } finally {
+      setPublishing(false);
+    }
   };
 
   return (
@@ -42,11 +65,17 @@ export default function CreateStory() {
         <button
           className="rounded-[10px] bg-indigo-500 px-[15px] py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           onClick={handlePublish}
-          disabled={!image}
+          disabled={!image || publishing}
         >
-          Publish
+          {publishing ? "Publishing..." : "Publish"}
         </button>
       </header>
+
+      {publishError && (
+        <p className="pt-3 text-center text-red-500 text-[11px]">
+          {publishError}
+        </p>
+      )}
 
       <main className="flex min-h-[calc(100vh-60px)] items-center justify-center p-5">
         {!image && (

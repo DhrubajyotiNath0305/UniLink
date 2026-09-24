@@ -14,14 +14,31 @@ import { useRouter } from "next/navigation";
 
 import BottomNav from "@/components/BottomNav";
 import { useAuth } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
-import {
-  getNotifications,
-  markNotificationAsRead,
-  markAllNotificationsAsRead,
-  deleteNotification,
-  clearNotifications,
-} from "@/utils/notificationStorage";
+const timeAgo = (timestamp) => {
+  if (!timestamp) return "";
+
+  const seconds = Math.floor(
+    (Date.now() - Number(timestamp)) / 1000
+  );
+
+  if (seconds < 60) return "Just now";
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+
+  return new Date(Number(timestamp)).toLocaleDateString(
+    [],
+    { day: "numeric", month: "short" }
+  );
+};
 
 export default function NotificationsPage() {
   const router = useRouter();
@@ -32,17 +49,28 @@ export default function NotificationsPage() {
   useEffect(() => {
     if (!user) return;
 
-    loadNotifications(user.id);
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const result = await request("/api/notifications?limit=50");
+
+        if (!cancelled) {
+          setNotifications(result.notifications);
+        }
+      } catch {
+        if (!cancelled) {
+          setNotifications([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
-  const loadNotifications = (userId) => {
-    const data = getNotifications(userId);
-    setNotifications(data);
-  };
-
-  const handleNotificationClick = (notification) => {
-    markNotificationAsRead(notification.id);
-
+  const handleNotificationClick = async (notification) => {
     setNotifications((previous) =>
       previous.map((item) =>
         item.id === notification.id
@@ -51,28 +79,38 @@ export default function NotificationsPage() {
       )
     );
 
+    try {
+      await request(`/api/notifications/${notification.id}`, {
+        method: "PATCH",
+      });
+    } catch {
+      // Ignore failures; navigation should still proceed.
+    }
+
     if (notification.link) {
       router.push(notification.link);
     }
   };
 
-  const handleMarkAllRead = () => {
-    if (!user) return;
-
-    markAllNotificationsAsRead(user.id);
-
+  const handleMarkAllRead = async () => {
     setNotifications((previous) =>
       previous.map((notification) => ({
         ...notification,
         read: true,
       }))
     );
+
+    try {
+      await request("/api/notifications/read-all", {
+        method: "POST",
+      });
+    } catch {
+      // Ignore failures.
+    }
   };
 
-  const handleDelete = (event, notificationId) => {
+  const handleDelete = async (event, notificationId) => {
     event.stopPropagation();
-
-    deleteNotification(notificationId);
 
     setNotifications((previous) =>
       previous.filter(
@@ -80,13 +118,26 @@ export default function NotificationsPage() {
           notification.id !== notificationId
       )
     );
+
+    try {
+      await request(`/api/notifications/${notificationId}`, {
+        method: "DELETE",
+      });
+    } catch {
+      // Ignore failures.
+    }
   };
 
-  const handleClearAll = () => {
-    if (!user) return;
-
-    clearNotifications(user.id);
+  const handleClearAll = async () => {
     setNotifications([]);
+
+    try {
+      await request("/api/notifications", {
+        method: "DELETE",
+      });
+    } catch {
+      // Ignore failures.
+    }
   };
 
   const getIcon = (type) => {
@@ -275,9 +326,9 @@ export default function NotificationsPage() {
                       {notification.message}
                     </p>
 
-                    {notification.time && (
+                    {timeAgo(notification.createdAt) && (
                       <p className="mt-1.5 text-xs text-slate-400">
-                        {notification.time}
+                        {timeAgo(notification.createdAt)}
                       </p>
                     )}
                   </div>

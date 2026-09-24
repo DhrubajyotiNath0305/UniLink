@@ -3,6 +3,7 @@ import { z } from "zod";
 export const projectListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(50).default(10),
+  ownerId: z.coerce.number().int().positive().optional(),
 });
 
 export const projectParamsSchema = z.object({
@@ -13,6 +14,9 @@ export const createProjectSchema = z
   .object({
     name: z.string().trim().min(1, "Project name is required").max(150),
     description: z.string().trim().max(5000).nullish(),
+    technologies: z.string().trim().max(1000).nullish(),
+    github: z.string().trim().max(500).nullish(),
+    demo: z.string().trim().max(500).nullish(),
   })
   .strict();
 
@@ -20,6 +24,9 @@ export const updateProjectSchema = z
   .object({
     name: z.string().trim().min(1).max(150).optional(),
     description: z.string().trim().max(5000).nullish(),
+    technologies: z.string().trim().max(1000).nullish(),
+    github: z.string().trim().max(500).nullish(),
+    demo: z.string().trim().max(500).nullish(),
   })
   .strict();
 

@@ -14,12 +14,12 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
-  const handleLogin = (event) => {
+  const handleLogin = async (event) => {
     event.preventDefault();
 
     setError("");
 
-    const success = login(
+    const success = await login(
       email.trim().toLowerCase(),
       password
     );
@@ -127,7 +127,7 @@ export default function Login() {
         </div>
 
         <div className="text-center">
-          <p className="text-slate-500 text-[11px]">Don't have an account?</p>
+          <p className="text-slate-500 text-[11px]">Don&apos;t have an account?</p>
 
           <Link className="mt-1.5 inline-block font-semibold text-indigo-500 text-[12px]" href="/register">
             Create an account

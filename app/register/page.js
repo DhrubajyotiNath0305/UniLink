@@ -22,11 +22,15 @@ export default function Register() {
   const [currentRole, setCurrentRole] = useState("");
   const [company, setCompany] = useState("");
 
-  const handleRegister = (event) => {
+  const [registrationError, setRegistrationError] = useState("");
+
+  const handleRegister = async (event) => {
     event.preventDefault();
 
+    setRegistrationError("");
+
     const newUser = {
-      name: name.trim(),
+      fullName: name.trim(),
       email: email.trim().toLowerCase(),
       password,
       department,
@@ -43,9 +47,14 @@ export default function Register() {
           }),
     };
 
-    register(newUser);
-
-    router.push("/");
+    try {
+      await register(newUser);
+      router.push("/");
+    } catch {
+      setRegistrationError(
+        "Could not create your account. Please check your details and try again."
+      );
+    }
   };
 
   return (
@@ -290,6 +299,12 @@ export default function Register() {
           >
             Create Account
           </button>
+
+          {registrationError && (
+            <p className="mt-3 text-center text-red-500 text-[11px]">
+              {registrationError}
+            </p>
+          )}
         </form>
 
         <div className="text-center">

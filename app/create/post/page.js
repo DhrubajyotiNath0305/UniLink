@@ -4,8 +4,8 @@ import { useState } from "react";
 import { ArrowLeft, Image, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { savePost } from "@/utils/postStorage";
 import { useAuth } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
 export default function CreatePost() {
   const router = useRouter();
@@ -13,6 +13,8 @@ export default function CreatePost() {
 
   const [content, setContent] = useState("");
   const [image, setImage] = useState(null);
+  const [publishError, setPublishError] = useState("");
+  const [publishing, setPublishing] = useState(false);
 
   const handleImageChange = (event) => {
     const file = event.target.files?.[0];
@@ -28,43 +30,30 @@ export default function CreatePost() {
     reader.readAsDataURL(file);
   };
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (!content.trim() || !user || loading) {
       return;
     }
 
-    const avatar =
-      user.profilePhoto ||
-      user.avatar ||
-      user.profilePicture ||
-      "";
+    setPublishError("");
 
-    const newPost = {
-      id: Date.now(),
+    try {
+      setPublishing(true);
 
-      // Store the actual user who created the post.
-      userId: user.id,
+      await request("/api/posts", {
+        method: "POST",
+        body: {
+          content: content.trim(),
+          image: image || null,
+        },
+      });
 
-      // Use the actual account information.
-      name: user.name || "User",
-      branch: user.branch || user.department || "",
-      year: user.year || "",
-
-      time: "Just now",
-      content: content.trim(),
-
-      likes: 0,
-      comments: 0,
-
-      image: image,
-
-      // Use the actual profile image.
-      avatar: avatar,
-    };
-
-    savePost(newPost);
-
-    router.push("/");
+      router.push("/");
+    } catch {
+      setPublishError("Could not publish your post. Please try again.");
+    } finally {
+      setPublishing(false);
+    }
   };
 
   const avatar =
@@ -128,11 +117,17 @@ export default function CreatePost() {
         <button
           className="rounded-[10px] bg-indigo-500 px-[15px] py-2 text-[12px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
           onClick={handlePublish}
-          disabled={!content.trim()}
+          disabled={!content.trim() || publishing}
         >
-          Publish
+          {publishing ? "Publishing..." : "Publish"}
         </button>
       </header>
+
+      {publishError && (
+        <p className="px-4 pt-3 text-center text-red-500 text-[11px]">
+          {publishError}
+        </p>
+      )}
 
       <main className="px-4 pt-[18px] pb-[100px]">
         <div className="mb-[18px] flex items-center gap-2.5">

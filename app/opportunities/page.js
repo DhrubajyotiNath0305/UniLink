@@ -10,8 +10,8 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { getOpportunities } from "@/utils/opportunityStorage";
 import { useAuth } from "@/context/AuthContext";
+import { request } from "@/lib/api-client";
 
 export default function Opportunities() {
   const router = useRouter();
@@ -21,22 +21,28 @@ export default function Opportunities() {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    const loadOpportunities = () => {
-      setOpportunities(getOpportunities());
-    };
+    let cancelled = false;
 
-    loadOpportunities();
+    (async () => {
+      try {
+        const result = await request(
+          "/api/opportunities?limit=50"
+        );
 
-    window.addEventListener(
-      "storage",
-      loadOpportunities
-    );
+        if (!cancelled) {
+          setOpportunities(
+            result.opportunities ?? []
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setOpportunities([]);
+        }
+      }
+    })();
 
     return () => {
-      window.removeEventListener(
-        "storage",
-        loadOpportunities
-      );
+      cancelled = true;
     };
   }, []);
 

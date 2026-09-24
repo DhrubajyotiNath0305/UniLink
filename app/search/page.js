@@ -13,12 +13,7 @@ import LoginPrompt from "@/components/LoginPrompt";
 
 import { useAuth } from "@/context/AuthContext";
 
-import { getOpportunities } from "@/utils/opportunityStorage";
-
-import {
-  getConnectionStatus,
-  sendConnectionRequest,
-} from "@/utils/connectionStorage";
+import { request } from "@/lib/api-client";
 
 export default function SearchPage() {
   const router = useRouter();
@@ -45,85 +40,120 @@ export default function SearchPage() {
   ] = useState(false);
 
   /*
+   * Map an API user row to the account shape used below.
+   */
+  const toAccount = (apiUser) => {
+    const profile = apiUser.profile ?? {};
+
+    return {
+      id: apiUser.id,
+      name: apiUser.fullName,
+      username: apiUser.username ?? "",
+      department: profile.department ?? "",
+      branch: profile.department ?? "",
+      course: profile.department ?? "",
+      year: profile.year ?? "",
+      studyYear: profile.year ?? "",
+      profilePhoto: apiUser.profilePhoto ?? "",
+      avatar: apiUser.profilePhoto ?? "",
+      skills: [],
+      accountType: apiUser.accountType ?? "student",
+    };
+  };
+
+  /*
    * Load accounts and opportunities
    */
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
+    let cancelled = false;
 
-    /*
-     * Load accounts
-     */
-    try {
-      const savedAccounts = JSON.parse(
-        localStorage.getItem("unilink_accounts")
-      ) || [];
+    const loadAll = async () => {
+      try {
+        const [usersResult, opportunitiesResult] =
+          await Promise.all([
+            request("/api/users?limit=50"),
+            request("/api/opportunities?limit=50"),
+          ]);
 
-      setAccounts(
-        Array.isArray(savedAccounts)
-          ? savedAccounts
-          : []
-      );
-    } catch {
-      setAccounts([]);
-    }
+        if (cancelled) return;
 
-    /*
-     * Load opportunities
-     */
-    try {
-      const savedOpportunities =
-        getOpportunities() || [];
+        setAccounts(
+          (usersResult.users ?? []).map(toAccount)
+        );
 
-      setOpportunities(
-        Array.isArray(savedOpportunities)
-          ? savedOpportunities
-          : []
-      );
-    } catch {
-      setOpportunities([]);
-    }
+        setOpportunities(
+          opportunitiesResult.opportunities ?? []
+        );
+      } catch {
+        if (!cancelled) {
+          setAccounts([]);
+          setOpportunities([]);
+        }
+      }
+    };
+
+    loadAll();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /*
    * Refresh connection statuses
    */
-  const refreshConnectionStatuses = () => {
-    if (
-      !user ||
-      accounts.length === 0
-    ) {
+  const loadConnectionStatuses = async () => {
+    try {
+      const [accepted, incoming, outgoing] =
+        await Promise.all([
+          request("/api/connections?limit=50"),
+          request(
+            "/api/connections?status=incoming&limit=50"
+          ),
+          request(
+            "/api/connections?status=outgoing&limit=50"
+          ),
+        ]);
+
+      const statuses = {};
+
+      (accepted.connections ?? []).forEach((connection) => {
+        if (connection.user?.id != null) {
+          statuses[connection.user.id] = "accepted";
+        }
+      });
+
+      (outgoing.connections ?? []).forEach((connection) => {
+        if (connection.user?.id != null) {
+          statuses[connection.user.id] = "pending";
+        }
+      });
+
+      (incoming.connections ?? []).forEach((connection) => {
+        if (
+          connection.user?.id != null &&
+          !statuses[connection.user.id]
+        ) {
+          statuses[connection.user.id] = "pending";
+        }
+      });
+
+      setConnectionStatuses(statuses);
+    } catch {
       setConnectionStatuses({});
-      return;
     }
-
-    const statuses = {};
-
-    accounts.forEach((account) => {
-      if (
-        String(account.id) ===
-        String(user.id)
-      ) {
-        return;
-      }
-
-      statuses[account.id] =
-        getConnectionStatus(
-          user.id,
-          account.id
-        );
-    });
-
-    setConnectionStatuses(statuses);
   };
 
   useEffect(() => {
-    refreshConnectionStatuses();
+    if (!user) return;
+
+    void (async () => {
+      await loadConnectionStatuses();
+    })();
   }, [user, accounts]);
 
   /*
-   * Keep connection status synchronized
+   * Keep connection status synchronized on focus
    */
   useEffect(() => {
     if (!user) {
@@ -131,13 +161,8 @@ export default function SearchPage() {
     }
 
     const handleConnectionUpdate = () => {
-      refreshConnectionStatuses();
+      loadConnectionStatuses();
     };
-
-    window.addEventListener(
-      "unilink-connections-updated",
-      handleConnectionUpdate
-    );
 
     window.addEventListener(
       "focus",
@@ -145,11 +170,6 @@ export default function SearchPage() {
     );
 
     return () => {
-      window.removeEventListener(
-        "unilink-connections-updated",
-        handleConnectionUpdate
-      );
-
       window.removeEventListener(
         "focus",
         handleConnectionUpdate
@@ -275,7 +295,7 @@ export default function SearchPage() {
   /*
    * Handle connection
    */
-  const handleConnect = (accountId) => {
+  const handleConnect = async (accountId) => {
     if (
       !isLoggedIn ||
       !user
@@ -291,44 +311,35 @@ export default function SearchPage() {
       return;
     }
 
-    const status =
-      getConnectionStatus(
-        user.id,
-        accountId
-      );
-
     /*
      * Already connected / pending
      */
-    if (status !== "none") {
-      setConnectionStatuses(
-        (previous) => ({
-          ...previous,
-          [accountId]: status,
-        })
-      );
-
+    if (
+      (connectionStatuses[accountId] || "none") !==
+      "none"
+    ) {
       return;
     }
 
     /*
      * Send request
      */
-    const connection =
-      sendConnectionRequest(
-        user.id,
-        accountId
-      );
+    try {
+      const result = await request("/api/connections", {
+        method: "POST",
+        body: { userId: accountId },
+      });
 
-    if (connection) {
       setConnectionStatuses(
         (previous) => ({
           ...previous,
           [accountId]:
-            connection.status ||
+            result.connection?.status ||
             "pending",
         })
       );
+    } catch {
+      loadConnectionStatuses();
     }
   };
 

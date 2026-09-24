@@ -36,11 +36,22 @@ function serializeMember(member) {
   };
 }
 
+function parseTechnologies(raw) {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export function toPublicProject(project) {
   return {
     id: project.id,
     name: project.name,
     description: project.description,
+    technologies: parseTechnologies(project.technologies),
+    github: project.github ?? null,
+    demo: project.demo ?? null,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     owner: toPublicUser({ ...project.owner }),
@@ -78,11 +89,18 @@ export async function getPublicProject(id, { includeJoinRequests = false } = {})
   return toPublicProject(project);
 }
 
-export async function createProject(ownerId, { name, description }) {
+export async function createProject(ownerId, { name, description, technologies, github, demo }) {
   const created = await db.transaction(async (tx) => {
     const [project] = await tx
       .insert(projects)
-      .values({ ownerId, name, description })
+      .values({
+        ownerId,
+        name,
+        description,
+        technologies: technologies || null,
+        github: github || null,
+        demo: demo || null,
+      })
       .returning();
     await tx
       .insert(projectMembers)
@@ -93,8 +111,13 @@ export async function createProject(ownerId, { name, description }) {
   return getPublicProject(created.id);
 }
 
-export async function listProjects({ page, limit }) {
+export async function listProjects({ page, limit, ownerId }) {
+  const where = ownerId != null
+    ? eq(projects.ownerId, ownerId)
+    : undefined;
+
   const rows = await db.query.projects.findMany({
+    where,
     orderBy: (p, { desc }) => [desc(p.createdAt), desc(p.id)],
     limit,
     offset: (page - 1) * limit,
@@ -104,13 +127,18 @@ export async function listProjects({ page, limit }) {
     },
   });
 
-  const total = await db.$count(projects);
+  const total = ownerId != null
+    ? await db.$count(projects, eq(projects.ownerId, ownerId))
+    : await db.$count(projects);
 
   return {
     projects: rows.map((project) => ({
       id: project.id,
       name: project.name,
       description: project.description,
+      technologies: parseTechnologies(project.technologies),
+      github: project.github ?? null,
+      demo: project.demo ?? null,
       createdAt: project.createdAt,
       updatedAt: project.updatedAt,
       owner: toPublicUser({ ...project.owner }),
@@ -141,6 +169,9 @@ export async function updateProject(projectId, ownerId, data) {
   const patch = {
     ...(data.name !== undefined ? { name: data.name } : {}),
     ...(data.description !== undefined ? { description: data.description } : {}),
+    ...(data.technologies !== undefined ? { technologies: data.technologies || null } : {}),
+    ...(data.github !== undefined ? { github: data.github || null } : {}),
+    ...(data.demo !== undefined ? { demo: data.demo || null } : {}),
   };
 
   await db

@@ -924,6 +924,395 @@ describe("projects", () => {
   });
 });
 
+describe("notifications", () => {
+  let connRequest;
+
+  test("sending a connection request creates a notification for the addressee", async () => {
+    const sent = expectOk(
+      await state.req("POST", "/api/connections", {
+        token: state.alice.token,
+        body: { userId: state.carol.id },
+      }),
+      201
+    );
+    connRequest = sent.connection.id;
+    const data = expectOk(
+      await state.req("GET", "/api/notifications", { token: state.carol.token })
+    );
+    const note = data.notifications.find((n) => n.type === "connection");
+    expect(note).toBeTruthy();
+    expect(note.read).toBe(false);
+    expect(note.sender.id).toBe(state.alice.id);
+  });
+
+  test("accepting a request creates a notification for the requester", async () => {
+    expectOk(
+      await state.req("PATCH", `/api/connections/${connRequest}`, {
+        token: state.carol.token,
+        body: { action: "accept" },
+      })
+    );
+    const data = expectOk(
+      await state.req("GET", "/api/notifications", { token: state.alice.token })
+    );
+    const note = data.notifications.find(
+      (n) => n.type === "connection" && n.sender.id === state.carol.id
+    );
+    expect(note).toBeTruthy();
+    expect(note.message).toContain("accepted");
+  });
+
+  test("PATCH marks a single notification as read", async () => {
+    const list = expectOk(
+      await state.req("GET", "/api/notifications", { token: state.carol.token })
+    );
+    const target = list.notifications.find((n) => n.type === "connection");
+    const marked = expectOk(
+      await state.req("PATCH", `/api/notifications/${target.id}`, {
+        token: state.carol.token,
+      })
+    );
+    expect(marked.notification.read).toBe(true);
+  });
+
+  test("POST read-all marks every notification read", async () => {
+    await state.req("POST", "/api/messages", {
+      token: state.bob.token,
+      body: { userId: state.alice.id, text: "Hi first" },
+    });
+    await state.req("POST", "/api/messages", {
+      token: state.carol.token,
+      body: { userId: state.alice.id, text: "Hi second" },
+    });
+    expectOk(
+      await state.req("POST", "/api/notifications/read-all", {
+        token: state.alice.token,
+      })
+    );
+    const data = expectOk(
+      await state.req("GET", "/api/notifications", { token: state.alice.token })
+    );
+    expect(data.total).toBeGreaterThanOrEqual(2);
+    expect(data.notifications.every((n) => n.read)).toBe(true);
+  });
+
+  test("DELETE removes a single notification", async () => {
+    const list = expectOk(
+      await state.req("GET", "/api/notifications", { token: state.alice.token })
+    );
+    const target = list.notifications.find((n) => n.type === "message");
+    const before = list.notifications.length;
+    expectOk(
+      await state.req("DELETE", `/api/notifications/${target.id}`, {
+        token: state.alice.token,
+      })
+    );
+    const after = expectOk(
+      await state.req("GET", "/api/notifications", { token: state.alice.token })
+    );
+    expect(after.notifications.length).toBe(before - 1);
+    expect(after.notifications.some((n) => n.id === target.id)).toBe(false);
+  });
+
+  test("DELETE clears all notifications", async () => {
+    expectOk(
+      await state.req("DELETE", "/api/notifications", { token: state.alice.token })
+    );
+    const data = expectOk(
+      await state.req("GET", "/api/notifications", { token: state.alice.token })
+    );
+    expect(data.total).toBe(0);
+  });
+
+  test("notifications endpoints return 401 without auth", async () => {
+    expectErr(await state.req("GET", "/api/notifications"), 401, "UNAUTHENTICATED");
+  });
+});
+
+describe("messages", () => {
+  test("sending a message to a connected user works", async () => {
+    const data = expectOk(
+      await state.req("POST", "/api/messages", {
+        token: state.alice.token,
+        body: { userId: state.bob.id, text: "Hello Bob" },
+      }),
+      201
+    );
+    expect(data.message.text).toBe("Hello Bob");
+    expect(data.message.read).toBe(false);
+  });
+
+  test("sending a message to an unconnected user returns 403", async () => {
+    expectErr(
+      await state.req("POST", "/api/messages", {
+        token: state.bob.token,
+        body: { userId: state.carol.id, text: "nope" },
+      }),
+      403,
+      "NOT_CONNECTED"
+    );
+  });
+
+  test("sending a message to yourself returns 400", async () => {
+    expectErr(
+      await state.req("POST", "/api/messages", {
+        token: state.alice.token,
+        body: { userId: state.alice.id, text: "nope" },
+      }),
+      400,
+      "SELF_MESSAGE"
+    );
+  });
+
+  test("sending to a nonexistent user returns 404", async () => {
+    expectErr(
+      await state.req("POST", "/api/messages", {
+        token: state.alice.token,
+        body: { userId: 999999999, text: "ghost" },
+      }),
+      404,
+      "NOT_FOUND"
+    );
+  });
+
+  test("GET /api/messages lists conversations with latest and unread", async () => {
+    const data = expectOk(
+      await state.req("GET", "/api/messages", { token: state.alice.token })
+    );
+    expect(data.total).toBeGreaterThanOrEqual(1);
+    const conv = data.conversations.find((c) => c.user.id === state.bob.id);
+    expect(conv).toBeTruthy();
+    expect(conv.latestMessage.text).toBe("Hello Bob");
+  });
+
+  test("GET /api/messages/:userId returns the conversation", async () => {
+    const data = expectOk(
+      await state.req("GET", `/api/messages/${state.bob.id}`, {
+        token: state.alice.token,
+      })
+    );
+    expect(data.total).toBeGreaterThanOrEqual(1);
+    expect(data.messages.some((m) => m.text === "Hello Bob")).toBe(true);
+  });
+
+  test("PATCH marks the conversation read", async () => {
+    expectOk(
+      await state.req("PATCH", `/api/messages/${state.alice.id}`, {
+        token: state.bob.token,
+      })
+    );
+    const data = expectOk(
+      await state.req("GET", "/api/messages", { token: state.bob.token })
+    );
+    const conv = data.conversations.find((c) => c.user.id === state.alice.id);
+    expect(conv.unreadCount).toBe(0);
+  });
+});
+
+describe("posts: likes & comments", () => {
+  let postId;
+
+  test("creating a post with an image works", async () => {
+    const data = expectOk(
+      await state.req("POST", "/api/posts", {
+        token: state.alice.token,
+        body: { content: "Image post", image: "data:image/jpeg;base64,AAAA" },
+      }),
+      201
+    );
+    postId = data.post.id;
+    expect(data.post.image).toBe("data:image/jpeg;base64,AAAA");
+  });
+
+  test("toggle like on and off with isLiked in list", async () => {
+    const liked = expectOk(
+      await state.req("POST", `/api/posts/${postId}/like`, { token: state.bob.token })
+    );
+    expect(liked.liked).toBe(true);
+    expect(liked.likes).toBe(1);
+
+    const asBob = expectOk(
+      await state.req("GET", `/api/posts/${postId}`, { token: state.bob.token })
+    );
+    expect(asBob.post.isLiked).toBe(true);
+
+    const unliked = expectOk(
+      await state.req("POST", `/api/posts/${postId}/like`, { token: state.bob.token })
+    );
+    expect(unliked.liked).toBe(false);
+    expect(unliked.likes).toBe(0);
+  });
+
+  test("carol likes the post", async () => {
+    expectOk(
+      await state.req("POST", `/api/posts/${postId}/like`, { token: state.carol.token })
+    );
+    const asBob = expectOk(await state.req("GET", "/api/posts", { token: state.bob.token }));
+    const post = asBob.posts.find((p) => p.id === postId);
+    expect(post.likes).toBe(1);
+    expect(post.isLiked).toBe(false);
+  });
+
+  test("commenting increments the count and lists", async () => {
+    const comment = expectOk(
+      await state.req("POST", `/api/posts/${postId}/comments`, {
+        token: state.bob.token,
+        body: { content: "Great post" },
+      }),
+      201
+    );
+    expect(comment.comment.author.fullName).toBe("Bob");
+
+    const list = expectOk(
+      await state.req("GET", `/api/posts/${postId}/comments`, { token: state.bob.token })
+    );
+    expect(list.total).toBe(1);
+    expect(list.comments[0].content).toBe("Great post");
+
+    const post = expectOk(
+      await state.req("GET", `/api/posts/${postId}`, { token: state.bob.token })
+    );
+    expect(post.post.comments).toBe(1);
+  });
+
+  test("commenting with empty content returns 422", async () => {
+    expectErr(
+      await state.req("POST", `/api/posts/${postId}/comments`, {
+        token: state.bob.token,
+        body: { content: "   " },
+      }),
+      422,
+      "VALIDATION_ERROR"
+    );
+  });
+
+  test("liking a nonexistent post returns 404", async () => {
+    expectErr(
+      await state.req("POST", "/api/posts/999999999/like", { token: state.bob.token }),
+      404,
+      "NOT_FOUND"
+    );
+  });
+});
+
+describe("opportunities", () => {
+  let opportunityId;
+
+  test("POST creates an opportunity owned by the poster", async () => {
+    const data = expectOk(
+      await state.req("POST", "/api/opportunities", {
+        token: state.alice.token,
+        body: {
+          title: "Summer Hackathon",
+          type: "Hackathon",
+          date: "2026-07-01",
+          location: "Campus",
+          description: "Build something cool",
+          link: "https://example.com",
+        },
+      }),
+      201
+    );
+    opportunityId = data.opportunity.id;
+    expect(data.opportunity.owner.fullName).toBe("Alice");
+    expect(data.opportunity.date).toBe("2026-07-01");
+  });
+
+  test("GET lists opportunities", async () => {
+    const data = expectOk(
+      await state.req("GET", "/api/opportunities", { token: state.bob.token })
+    );
+    expect(data.total).toBeGreaterThanOrEqual(1);
+    expect(data.opportunities.some((o) => o.id === opportunityId)).toBe(true);
+  });
+
+  test("GET by id returns the detail", async () => {
+    const data = expectOk(
+      await state.req("GET", `/api/opportunities/${opportunityId}`, {
+        token: state.bob.token,
+      })
+    );
+    expect(data.opportunity.title).toBe("Summer Hackathon");
+  });
+
+  test("PATCH by a non-owner returns 403", async () => {
+    expectErr(
+      await state.req("PATCH", `/api/opportunities/${opportunityId}`, {
+        token: state.bob.token,
+        body: { title: "hijacked" },
+      }),
+      403,
+      "FORBIDDEN"
+    );
+  });
+
+  test("PATCH by the owner updates", async () => {
+    const data = expectOk(
+      await state.req("PATCH", `/api/opportunities/${opportunityId}`, {
+        token: state.alice.token,
+        body: { title: "Summer Hackathon 2.0" },
+      })
+    );
+    expect(data.opportunity.title).toBe("Summer Hackathon 2.0");
+  });
+
+  test("DELETE by the owner removes it", async () => {
+    expectOk(
+      await state.req("DELETE", `/api/opportunities/${opportunityId}`, {
+        token: state.alice.token,
+      })
+    );
+    expectErr(
+      await state.req("GET", `/api/opportunities/${opportunityId}`, {
+        token: state.alice.token,
+      }),
+      404,
+      "NOT_FOUND"
+    );
+  });
+
+  test("creating with an invalid date returns 422", async () => {
+    expectErr(
+      await state.req("POST", "/api/opportunities", {
+        token: state.alice.token,
+        body: { title: "Bad date", type: "Event", date: "july-2026" },
+      }),
+      422,
+      "VALIDATION_ERROR"
+    );
+  });
+});
+
+describe("stories", () => {
+  test("POST creates a story that lists", async () => {
+    const data = expectOk(
+      await state.req("POST", "/api/stories", {
+        token: state.bob.token,
+        body: { image: "data:image/jpeg;base64,BBBB" },
+      }),
+      201
+    );
+    expect(data.story.image).toBe("data:image/jpeg;base64,BBBB");
+    expect(data.story.user.fullName).toBe("Bob");
+
+    const list = expectOk(
+      await state.req("GET", "/api/stories", { token: state.alice.token })
+    );
+    expect(list.stories.some((s) => s.id === data.story.id)).toBe(true);
+  });
+
+  test("creating a story without an image returns 422", async () => {
+    expectErr(
+      await state.req("POST", "/api/stories", {
+        token: state.bob.token,
+        body: { image: " " },
+      }),
+      422,
+      "VALIDATION_ERROR"
+    );
+  });
+});
+
 function baseUrl() {
   const meta = JSON.parse(
     readFileSync(path.join(root, "tests", ".tmp", "api-run.json"), "utf8")

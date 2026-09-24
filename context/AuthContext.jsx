@@ -6,119 +6,111 @@ import {
   useEffect,
   useState,
 } from "react";
+import { request } from "@/lib/api-client";
 
 const AuthContext = createContext();
 
-const USER_KEY = "unilink_user";
-const ACCOUNTS_KEY = "unilink_accounts";
+export function toClientUser(apiUser) {
+  if (!apiUser) return null;
+
+  const profile = apiUser.profile ?? {};
+
+  return {
+    id: apiUser.id,
+    name: apiUser.fullName,
+    email: apiUser.email,
+    username: apiUser.username ?? "",
+    accountType: apiUser.accountType ?? "student",
+    department: profile.department ?? "",
+    branch: profile.department ?? "",
+    course: profile.department ?? "",
+    year: profile.year ?? "",
+    studyYear: profile.year ?? "",
+    bio: profile.bio ?? "",
+    profilePhoto: apiUser.profilePhoto ?? "",
+    avatar: apiUser.profilePhoto ?? "",
+    profilePicture: apiUser.profilePhoto ?? "",
+    github: apiUser.github ?? "",
+    linkedin: apiUser.linkedin ?? "",
+    location: apiUser.location ?? "",
+    college: apiUser.college ?? "",
+    graduationYear: apiUser.graduationYear ?? "",
+    currentRole: apiUser.currentRole ?? "",
+    company: apiUser.company ?? "",
+    skills: apiUser.skills ?? [],
+  };
+}
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Load logged-in user when the app starts
   useEffect(() => {
-    try {
-      const savedUser = localStorage.getItem(USER_KEY);
+    let cancelled = false;
 
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
+    (async () => {
+      try {
+        const me = await request("/api/auth/me");
+
+        if (!cancelled) {
+          setUser(toClientUser(me));
+        }
+      } catch {
+        if (!cancelled) {
+          setUser(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    } catch (error) {
-      console.error("Failed to load user:", error);
-      localStorage.removeItem(USER_KEY);
-    } finally {
-      setLoading(false);
-    }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const register = (newUser) => {
-    const savedAccounts =
-      JSON.parse(localStorage.getItem(ACCOUNTS_KEY)) || [];
+  const register = async (newUser) => {
+    const created = await request("/api/auth/register", {
+      method: "POST",
+      body: newUser,
+    });
 
-    const account = {
-      ...newUser,
-      id: Date.now(),
-    };
-
-    const updatedAccounts = [
-      ...savedAccounts,
-      account,
-    ];
-
-    localStorage.setItem(
-      ACCOUNTS_KEY,
-      JSON.stringify(updatedAccounts)
-    );
-
-    localStorage.setItem(
-      USER_KEY,
-      JSON.stringify(account)
-    );
-
-    setUser(account);
-
-    return account;
+    setUser(toClientUser(created.user));
   };
 
-  const login = (email, password) => {
-    const savedAccounts =
-      JSON.parse(localStorage.getItem(ACCOUNTS_KEY)) || [];
+  const login = async (email, password) => {
+    try {
+      const result = await request("/api/auth/login", {
+        method: "POST",
+        body: { email, password },
+      });
 
-    const account = savedAccounts.find(
-      (item) =>
-        String(item.email || "").toLowerCase() ===
-          email &&
-        item.password === password
-    );
+      setUser(toClientUser(result.user));
 
-    if (!account) {
+      return true;
+    } catch {
       return false;
     }
-
-    localStorage.setItem(
-      USER_KEY,
-      JSON.stringify(account)
-    );
-
-    setUser(account);
-
-    return true;
   };
 
-  const updateUser = (updatedData) => {
-    if (!user) return;
+  const updateUser = async (updatedData) => {
+    const updated = await request("/api/users/me", {
+      method: "PATCH",
+      body: updatedData,
+    });
 
-    const updatedUser = {
-      ...user,
-      ...updatedData,
-    };
-
-    const savedAccounts =
-      JSON.parse(localStorage.getItem(ACCOUNTS_KEY)) || [];
-
-    const updatedAccounts = savedAccounts.map(
-      (account) =>
-        String(account.id) === String(user.id)
-          ? updatedUser
-          : account
-    );
-
-    localStorage.setItem(
-      ACCOUNTS_KEY,
-      JSON.stringify(updatedAccounts)
-    );
-
-    localStorage.setItem(
-      USER_KEY,
-      JSON.stringify(updatedUser)
-    );
-
-    setUser(updatedUser);
+    setUser(toClientUser(updated.user));
   };
 
-  const logout = () => {
-    localStorage.removeItem(USER_KEY);
+  const logout = async () => {
+    try {
+      await request("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Ignore logout failures; clear local state regardless.
+    }
+
     setUser(null);
   };
 

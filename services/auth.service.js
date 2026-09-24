@@ -7,8 +7,8 @@ import {
   toPublicUser,
 } from "./user.service";
 
-export async function register({ fullName, email, password }) {
-  const user = await createUser({ fullName, email, password });
+export async function register({ fullName, email, password, ...fields }) {
+  const user = await createUser({ fullName, email, password, ...fields });
   return toPublicUser(user, { withEmail: true });
 }
 

@@ -9,13 +9,14 @@ import {
   Users,
   MessageCircle,
   User,
-  MoreHorizontal,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/context/AuthContext";
 import BottomNav from "@/components/BottomNav";
 import LoginPrompt from "@/components/LoginPrompt";
+import PostCard from "@/components/PostCard";
+import { request } from "@/lib/api-client";
 
 export default function Home() {
   const router = useRouter();
@@ -23,20 +24,60 @@ export default function Home() {
 
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
   const [posts, setPosts] = useState([]);
+  const [stories, setStories] = useState([]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    let cancelled = false;
 
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem("unilink_posts") || "[]"
-      );
+    const loadPosts = async () => {
+      try {
+        const result = await request("/api/posts");
+        if (!cancelled) {
+          setPosts(result.posts ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setPosts([]);
+        }
+      }
+    };
 
-      setPosts(Array.isArray(saved) ? saved : []);
-    } catch {
-      setPosts([]);
-    }
+    loadPosts();
+
+    const onFocus = () => loadPosts();
+
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadStories = async () => {
+      if (!isLoggedIn) return;
+
+      try {
+        const result = await request("/api/stories");
+        if (!cancelled) {
+          setStories(result.stories ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setStories([]);
+        }
+      }
+    };
+
+    loadStories();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn]);
 
   const requireLogin = (action) => {
     if (!isLoggedIn) {
@@ -481,37 +522,12 @@ export default function Home() {
 
               </button>
 
-              {/* SAMPLE STORIES */}
+              {/* STORIES */}
 
-              {[
-                {
-                  name: "Rohan",
-                  image: "https://i.pravatar.cc/100?img=11",
-                },
-                {
-                  name: "Ananya",
-                  image: "https://i.pravatar.cc/100?img=32",
-                },
-                {
-                  name: "Aditya",
-                  image: "https://i.pravatar.cc/100?img=12",
-                },
-                {
-                  name: "Priya",
-                  image: "https://i.pravatar.cc/100?img=47",
-                },
-                {
-                  name: "Rahul",
-                  image: "https://i.pravatar.cc/100?img=13",
-                },
-                {
-                  name: "Sneha",
-                  image: "https://i.pravatar.cc/100?img=44",
-                },
-              ].map((story) => (
+              {stories.map((story) => (
                 <button
                   type="button"
-                  key={story.name}
+                  key={story.id}
                   className="
                     flex
                     min-w-[58px]
@@ -519,7 +535,6 @@ export default function Home() {
                     items-center
                   "
                 >
-
                   <div
                     className="
                       rounded-full
@@ -534,8 +549,11 @@ export default function Home() {
                     <div className="rounded-full bg-white p-[2px]">
 
                       <img
-                        src={story.image}
-                        alt={story.name}
+                        src={
+                          story.user?.profilePhoto ||
+                          `https://i.pravatar.cc/100?u=${story.user?.id || "story"}`
+                        }
+                        alt={story.user?.fullName || "Story"}
                         className="
                           size-[54px]
                           rounded-full
@@ -557,7 +575,7 @@ export default function Home() {
                       text-slate-700
                     "
                   >
-                    {story.name}
+                    {story.user?.fullName || "Story"}
                   </span>
 
                 </button>
@@ -574,204 +592,12 @@ export default function Home() {
           <section className="mt-5 space-y-5">
 
             {posts.length > 0 ? (
-              posts.map((post, index) => {
-
-                const postUser =
-                  post.user ||
-                  post.author ||
-                  {};
-
-                const postName =
-                  postUser.name ||
-                  post.name ||
-                  "Student";
-
-                const postAvatar =
-                  postUser.profilePhoto ||
-                  postUser.avatar ||
-                  post.avatar ||
-                  `https://i.pravatar.cc/100?img=${
-                    index + 20
-                  }`;
-
-                const postBranch =
-                  postUser.branch ||
-                  post.branch ||
-                  "CSE";
-
-                return (
-                  <article
-                    key={
-                      post.id ||
-                      `${postName}-${index}`
-                    }
-                    className="
-                      overflow-hidden
-                      rounded-2xl
-                      border
-                      border-slate-200
-                      bg-white
-                    "
-                  >
-
-                    {/* POST HEADER */}
-
-                    <div className="flex items-center justify-between px-5 pt-5">
-
-                      <div className="flex items-center gap-3">
-
-                        <img
-                          src={postAvatar}
-                          alt={postName}
-                          className="
-                            size-10
-                            rounded-full
-                            object-cover
-                          "
-                        />
-
-                        <div>
-
-                          <h3 className="text-sm font-semibold text-slate-900">
-                            {postName}
-                          </h3>
-
-                          <p className="mt-0.5 text-[11px] text-slate-500">
-                            {postBranch}
-
-                            {post.year
-                              ? ` • ${post.year}`
-                              : ""}
-
-                            {post.createdAt
-                              ? ` • ${post.createdAt}`
-                              : ""}
-                          </p>
-
-                        </div>
-
-                      </div>
-
-                      <button
-                        type="button"
-                        className="
-                          flex
-                          size-8
-                          items-center
-                          justify-center
-                          rounded-full
-                          text-slate-400
-                          hover:bg-slate-100
-                        "
-                      >
-                        <MoreHorizontal size={19} />
-                      </button>
-
-                    </div>
-
-                    {/* TEXT */}
-
-                    {(post.text || post.content) && (
-                      <p
-                        className="
-                          px-5
-                          pt-4
-                          text-sm
-                          leading-6
-                          text-slate-700
-                        "
-                      >
-                        {post.text || post.content}
-                      </p>
-                    )}
-
-                    {/* IMAGE */}
-
-                    {post.image && (
-                      <div
-                        className="
-                          mt-4
-                          overflow-hidden
-                          bg-slate-100
-                        "
-                      >
-                        <img
-                          src={post.image}
-                          alt="Post"
-                          className="
-                            block
-                            max-h-[650px]
-                            w-full
-                            object-contain
-                          "
-                        />
-                      </div>
-                    )}
-
-                    {/* ACTIONS */}
-
-                    <div
-                      className="
-                        flex
-                        items-center
-                        gap-6
-                        border-t
-                        border-slate-100
-                        px-5
-                        py-4
-                      "
-                    >
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          requireLogin(() => {})
-                        }
-                        className="
-                          text-xs
-                          font-medium
-                          text-slate-500
-                          hover:text-indigo-500
-                        "
-                      >
-                        Like
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          requireLogin(() => {})
-                        }
-                        className="
-                          text-xs
-                          font-medium
-                          text-slate-500
-                          hover:text-indigo-500
-                        "
-                      >
-                        Comment
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          requireLogin(() => {})
-                        }
-                        className="
-                          text-xs
-                          font-medium
-                          text-slate-500
-                          hover:text-indigo-500
-                        "
-                      >
-                        Share
-                      </button>
-
-                    </div>
-
-                  </article>
-                );
-              })
+              posts.map((post) => (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                />
+              ))
             ) : (
 
               /* EMPTY FEED */

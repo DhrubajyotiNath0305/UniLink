@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
-import { getOpportunities } from "@/utils/opportunityStorage";
+import { request } from "@/lib/api-client";
 
 export default function OpportunityDetails() {
   const router = useRouter();
@@ -20,15 +20,31 @@ export default function OpportunityDetails() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const opportunities = getOpportunities();
+    let cancelled = false;
 
-    const found = opportunities.find(
-      (item) =>
-        String(item.id) === String(params.id)
-    );
+    (async () => {
+      try {
+        const result = await request(
+          `/api/opportunities/${params.id}`
+        );
 
-    setOpportunity(found || null);
-    setLoading(false);
+        if (!cancelled) {
+          setOpportunity(result.opportunity);
+        }
+      } catch {
+        if (!cancelled) {
+          setOpportunity(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
 
   const handleShare = async () => {

@@ -29,7 +29,9 @@ export default function EditProfile() {
   const [bio, setBio] = useState(user?.bio || "");
 
   const [skills, setSkills] = useState(
-    user?.skills?.join(", ") || ""
+    (user?.skills ?? [])
+      .map((skill) => skill?.name ?? skill)
+      .join(", ") || ""
   );
 
   const [github, setGithub] = useState(
@@ -42,9 +44,9 @@ export default function EditProfile() {
 
   const [graduationYear, setGraduationYear] =
     useState(
-      user?.graduationYear ||
-        user?.passoutYear ||
-        ""
+      user?.graduationYear
+        ? String(user.graduationYear)
+        : ""
     );
 
   const [currentRole, setCurrentRole] = useState(
@@ -54,6 +56,9 @@ export default function EditProfile() {
   const [company, setCompany] = useState(
     user?.company || ""
   );
+
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   if (!user) {
     return null;
@@ -79,11 +84,13 @@ export default function EditProfile() {
     reader.readAsDataURL(file);
   };
 
-  const handleSave = (event) => {
+  const handleSave = async (event) => {
     event.preventDefault();
 
+    setSaveError("");
+
     const updatedData = {
-      name: name.trim(),
+      fullName: name.trim(),
       bio: bio.trim(),
       profilePhoto,
 
@@ -97,19 +104,29 @@ export default function EditProfile() {
     };
 
     if (isAlumni) {
-      updatedData.graduationYear =
-        graduationYear.trim();
+      const trimmedYear = graduationYear.trim();
 
-      updatedData.currentRole =
-        currentRole.trim();
+      if (trimmedYear) {
+        updatedData.graduationYear = Number(trimmedYear);
+      }
 
-      updatedData.company =
-        company.trim();
+      updatedData.currentRole = currentRole.trim();
+      updatedData.company = company.trim();
     }
 
-    updateUser(updatedData);
+    try {
+      setSaving(true);
 
-    router.push("/profile");
+      await updateUser(updatedData);
+
+      router.push("/profile");
+    } catch {
+      setSaveError(
+        "Could not save your profile. Please try again."
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -464,13 +481,20 @@ export default function EditProfile() {
 
             <button
               type="submit"
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-600 active:scale-[0.98] sm:w-auto"
+              disabled={saving}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
             >
               <Save size={17} />
-              Save Changes
+              {saving ? "Saving..." : "Save Changes"}
             </button>
 
           </div>
+
+          {saveError && (
+            <p className="mt-4 text-center text-sm text-red-500">
+              {saveError}
+            </p>
+          )}
 
         </form>
       </main>
