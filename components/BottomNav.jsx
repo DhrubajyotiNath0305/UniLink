@@ -83,7 +83,8 @@ function BottomNav() {
           lg:border-slate-200
           lg:bg-white
           lg:px-4
-          lg:py-[30px]
+          lg:pt-[98px]
+          lg:pb-[30px]
 
           min-[1400px]:w-[240px]
           min-[1400px]:px-[22px]
@@ -92,17 +93,6 @@ function BottomNav() {
           max-[380px]:w-[calc(100%-14px)]
         "
       >
-        {/* Desktop Brand */}
-        <div className="hidden lg:block lg:px-[14px] lg:pt-2 lg:pb-[38px]">
-          <h1 className="text-[25px] font-extrabold tracking-[-1px] lg:text-[28px]">
-            Uni<span className="text-indigo-500">Link</span>
-          </h1>
-
-          <p className="mt-[3px] text-[11px] text-slate-500 lg:text-[10px]">
-            Ideas. People. Opportunities.
-          </p>
-        </div>
-
         {/* Home */}
         <button
           type="button"

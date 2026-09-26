@@ -5,6 +5,7 @@ import { ArrowLeft, LockKeyhole, Mail } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
+import { readNextParam } from "@/lib/redirect";
 
 export default function Login() {
   const router = useRouter();
@@ -29,7 +30,10 @@ export default function Login() {
       return;
     }
 
-    router.push("/");
+    // Read at submit time, not on mount: the query cannot change while the form
+    // is on screen, and it keeps ?next= out of React state entirely. Resolves to
+    // "/" when absent, and rejects off-site values.
+    router.push(readNextParam());
   };
 
   return (
@@ -37,7 +41,8 @@ export default function Login() {
       <header className="flex h-[60px] items-center px-[14px]">
         <button
           className="flex items-center justify-center"
-          onClick={() => router.back()}
+          onClick={() => router.push("/")}
+          aria-label="Back"
         >
           <ArrowLeft size={21} />
         </button>
@@ -136,7 +141,7 @@ export default function Login() {
 
         <button
           className="mx-auto mt-[25px] block text-slate-500 text-[10px]"
-          onClick={() => router.push("/")}
+          onClick={() => router.push("/register")}
         >
           Continue browsing
         </button>
