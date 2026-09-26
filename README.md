@@ -1,38 +1,114 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# UniLink
 
-## Getting Started
+A campus social network for students: posts, connections, messaging, opportunities, projects and stories. Built with Next.js (App Router) and PostgreSQL via Drizzle ORM.
 
-First, run the development server:
+## Stack
+
+- **Next.js 16** (App Router, React 19) and Tailwind CSS 4
+- **PostgreSQL** with [Drizzle ORM](https://orm.drizzle.team) using the `pg` driver
+- **Zod** for request validation, custom JWT cookie auth
+
+## Requirements
+
+- Node.js 20+
+- A PostgreSQL database (a local Docker container is fine for development)
+
+## Setup
+
+1. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+2. Create your environment file:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Then fill in the values. You need at minimum:
+
+   | Variable | Purpose |
+   | --- | --- |
+   | `DATABASE_URL` | Pooled connection used by the app at runtime |
+   | `DIRECT_DATABASE_URL` | Unpooled connection used by migrations and the e2e suite |
+   | `JWT_SECRET` | Signing key for session tokens |
+
+   Generate a secret with:
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+   ```
+
+   On **Neon**, `DATABASE_URL` should point at the pooled host (it ends in
+   `-pooler.<region>.aws.neon.tech`) and `DIRECT_DATABASE_URL` at the direct
+   host. A transaction-mode pooler cannot hold a session open for the length of
+   a migration, so migrations must bypass it.
+
+3. Create the tables:
+
+   ```bash
+   npm run db:migrate
+   ```
+
+4. Start the dev server:
+
+   ```bash
+   npm run dev
+   ```
+
+   Then open [http://localhost:3000](http://localhost:3000).
+
+### Local database with Docker
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker run -d --name unilink-pg \
+  -e POSTGRES_USER=unilink \
+  -e POSTGRES_PASSWORD=unilink \
+  -e POSTGRES_DB=unilink \
+  -p 5432:5432 postgres:17-alpine
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Point both `DATABASE_URL` and `DIRECT_DATABASE_URL` at
+`postgresql://unilink:unilink@localhost:5432/unilink`.
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Start the dev server |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint |
+| `npm test` | Unit tests (Vitest) |
+| `npm run test:api` | API end-to-end tests against a real database |
+| `npm run db:generate` | Generate a migration from schema changes |
+| `npm run db:migrate` | Apply pending migrations |
+| `npm run db:push` | Push the schema directly, skipping migrations |
 
-## Learn More
+## Testing
 
-To learn more about Next.js, take a look at the following resources:
+`npm test` runs the unit suite and needs no database.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`npm run test:api` is different: it **creates and deletes real records** in
+whatever database `DIRECT_DATABASE_URL` points at, and will refuse to start
+unless you opt in explicitly.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+API_TEST_ALLOW_LIVE=1 npm run test:api
+```
 
-## Deploy on Vercel
+Add `API_TEST_ALLOW_LOCAL=1` to skip the loud warning banner when the target is
+a throwaway database on localhost. Never point this at a database you care
+about. Each run tags its fixtures with a unique id and removes them during
+teardown, but it is still a destructive suite.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Schema notes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Timestamps are stored as epoch milliseconds in a `bigint` column and mapped to
+JavaScript numbers, so the JSON API returns plain numbers and the client can
+keep using `new Date(ts)`. They are deliberately not `timestamptz`; if you
+change that, every `new Date(...)` call site needs revisiting.
 
-I am argha
+User search uses `ILIKE` because PostgreSQL's `LIKE` is case-sensitive, unlike
+SQLite's default ASCII behaviour.

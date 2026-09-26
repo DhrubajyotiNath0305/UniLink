@@ -115,7 +115,6 @@ export async function createUser({ email, fullName, password, ...fields }) {
       department: fields.department ?? null,
       year: fields.year ?? null,
     })
-    .run();
   const created = await getUserById(user.id);
   return created;
 }
@@ -225,8 +224,12 @@ function escapeLike(input) {
 }
 
 function likeCondition(column, value) {
+  // ILIKE, not LIKE: Postgres LIKE is case-sensitive whereas the SQLite dialect
+  // this replaced was not, so a lowercased query would silently stop matching
+  // stored names. `escape '\'` stays valid and keeps wildcards in user input
+  // literal.
   const pattern = `%${escapeLike(value)}%`;
-  return sql`${column} like ${pattern} escape '\\'`;
+  return sql`${column} ilike ${pattern} escape '\\'`;
 }
 
 export async function searchUsers({ query, page, limit, accountType }) {

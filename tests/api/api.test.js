@@ -183,6 +183,23 @@ describe("users", () => {
     expect(data.users.every((u) => u.fullName === "Bob")).toBe(true);
   });
 
+  test("GET /api/users?query= is case-insensitive (Postgres ILIKE regression)", async () => {
+    // SQLite's LIKE is case-insensitive for ASCII by default, so this passed
+    // there without an explicit operator. Postgres LIKE is case-sensitive, so
+    // the search has to use ILIKE to keep the old behaviour.
+    for (const query of ["bob", "BOB", "bOb"]) {
+      const data = expectOk(
+        await state.req("GET", `/api/users?query=${query}`, {
+          token: state.alice.token,
+        })
+      );
+      expect(
+        data.users.some((u) => u.fullName === "Bob"),
+        `query=${query} should match "Bob"`
+      ).toBe(true);
+    }
+  });
+
   test("GET /api/users?query=%% matches literally (L2 regression)", async () => {
     const data = expectOk(
       await state.req(`GET`, `/api/users?query=${encodeURIComponent("%")}`, {
@@ -1151,6 +1168,34 @@ describe("posts: likes & comments", () => {
     const post = asBob.posts.find((p) => p.id === postId);
     expect(post.likes).toBe(1);
     expect(post.isLiked).toBe(false);
+  });
+
+  test("concurrent likes from different users do not lose increments", async () => {
+    // The counter is maintained by a read-modify-write in application code, so
+    // it is only safe if the update is a single atomic SQL statement. Two
+    // overlapping requests that each read 0 and write 1 would lose one increment
+    // under the old implementation.
+    const created = expectOk(
+      await state.req("POST", "/api/posts", {
+        token: state.alice.token,
+        body: { content: "Concurrency probe" },
+      }),
+      201
+    );
+    const id = created.post.id;
+
+    const responses = await Promise.all([
+      state.req("POST", `/api/posts/${id}/like`, { token: state.bob.token }),
+      state.req("POST", `/api/posts/${id}/like`, { token: state.carol.token }),
+    ]);
+    for (const call of responses) {
+      expect(call.status).toBe(200);
+    }
+
+    const data = expectOk(
+      await state.req("GET", `/api/posts/${id}`, { token: state.bob.token })
+    );
+    expect(data.post.likes).toBe(2);
   });
 
   test("commenting increments the count and lists", async () => {

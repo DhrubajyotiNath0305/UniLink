@@ -14,12 +14,12 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
-    "lucide-react": "^1.45.0",
-    "@libsql/client": "^0.18.0",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.12",
+    "lucide-react": "^1.45.0",
     "next": "16.3.5",
+    "pg": "^8.23.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "zod": "^4.6.5"

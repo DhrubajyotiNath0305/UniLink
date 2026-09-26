@@ -195,7 +195,7 @@ export async function removeConnection(userId, connectionId) {
   if (row.requesterId !== userId && row.addresseeId !== userId) {
     throw new ApiError(403, "You cannot remove this connection", "FORBIDDEN");
   }
-  await db.delete(connections).where(eq(connections.id, connectionId)).run();
+  await db.delete(connections).where(eq(connections.id, connectionId));
 }
 
 export async function listConnections(userId, { page, limit }) {

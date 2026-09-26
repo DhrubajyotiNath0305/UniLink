@@ -65,7 +65,7 @@ export async function listNotifications(userId, { page, limit }) {
 export async function getUnreadCount(userId) {
   return db.$count(
     notifications,
-    and(eq(notifications.userId, userId), eq(notifications.read, 0))
+    and(eq(notifications.userId, userId), eq(notifications.read, false))
   );
 }
 
@@ -79,7 +79,7 @@ export async function markNotificationAsRead(userId, id) {
   }
   const [updated] = await db
     .update(notifications)
-    .set({ read: 1, updatedAt: Date.now() })
+    .set({ read: true, updatedAt: Date.now() })
     .where(eq(notifications.id, id))
     .returning();
   return toPublicNotification({ ...updated, sender: row.sender });
@@ -88,9 +88,8 @@ export async function markNotificationAsRead(userId, id) {
 export async function markAllNotificationsAsRead(userId) {
   await db
     .update(notifications)
-    .set({ read: 1, updatedAt: Date.now() })
-    .where(and(eq(notifications.userId, userId), eq(notifications.read, 0)))
-    .run();
+    .set({ read: true, updatedAt: Date.now() })
+    .where(and(eq(notifications.userId, userId), eq(notifications.read, false)))
 }
 
 export async function deleteNotification(userId, id) {
@@ -101,9 +100,9 @@ export async function deleteNotification(userId, id) {
   if (row.userId !== userId) {
     throw new ApiError(403, "You cannot delete this notification", "FORBIDDEN");
   }
-  await db.delete(notifications).where(eq(notifications.id, id)).run();
+  await db.delete(notifications).where(eq(notifications.id, id));
 }
 
 export async function clearNotifications(userId) {
-  await db.delete(notifications).where(eq(notifications.userId, userId)).run();
+  await db.delete(notifications).where(eq(notifications.userId, userId));
 }

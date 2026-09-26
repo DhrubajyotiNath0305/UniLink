@@ -1,31 +1,51 @@
 import { relations, sql } from "drizzle-orm";
 import {
+  bigint,
+  boolean,
   index,
   integer,
+  pgEnum,
+  pgTable,
   primaryKey,
-  sqliteTable,
+  serial,
   text,
   uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+} from "drizzle-orm/pg-core";
 
-const now = sql`(unixepoch() * 1000)`;
+// Timestamps are stored as epoch milliseconds rather than `timestamptz` so the
+// JSON API keeps emitting numbers. `mode: "number"` asks the driver to parse
+// int8 into a JS number (exact well past 2^53), which keeps `Date.now()`
+// round-tripping unchanged. The column must be bigint, not integer: epoch
+// milliseconds overflow int4 by three orders of magnitude.
+const now = sql`(extract(epoch from now()) * 1000)::bigint`;
 
 const timestamps = {
-  createdAt: integer("created_at").notNull().default(now),
-  updatedAt: integer("updated_at").notNull().default(now),
+  createdAt: bigint("created_at", { mode: "number" }).notNull().default(now),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull().default(now),
 };
 
-export const users = sqliteTable(
+export const accountTypeEnum = pgEnum("account_type", ["student", "alumni"]);
+export const connectionStatusEnum = pgEnum("connection_status", [
+  "pending",
+  "accepted",
+  "rejected",
+]);
+export const projectRoleEnum = pgEnum("project_role", ["member", "owner"]);
+export const joinRequestStatusEnum = pgEnum("join_request_status", [
+  "pending",
+  "accepted",
+  "rejected",
+]);
+
+export const users = pgTable(
   "users",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     email: text("email").notNull(),
     passwordHash: text("password_hash").notNull(),
     fullName: text("full_name").notNull(),
     username: text("username"),
-    accountType: text("account_type", { enum: ["student", "alumni"] })
-      .notNull()
-      .default("student"),
+    accountType: accountTypeEnum("account_type").notNull().default("student"),
     profilePhoto: text("profile_photo"),
     github: text("github"),
     linkedin: text("linkedin"),
@@ -39,27 +59,35 @@ export const users = sqliteTable(
   (table) => [uniqueIndex("users_email_unique").on(table.email)]
 );
 
-export const profiles = sqliteTable("profiles", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  bio: text("bio"),
-  department: text("department"),
-  year: text("year"),
-  ...timestamps,
-});
-
-export const skills = sqliteTable(
-  "skills",
+export const profiles = pgTable(
+  "profiles",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    name: text("name").notNull(),
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    bio: text("bio"),
+    department: text("department"),
+    year: text("year"),
+    ...timestamps,
   },
-  (table) => [uniqueIndex("skills_name_unique").on(table.name)]
+  // The user <-> profile relationship is 1:1 and enforced here rather than only
+  // in application code.
+  (table) => [uniqueIndex("profiles_user_unique").on(table.userId)]
 );
 
-export const userSkills = sqliteTable(
+export const skills = pgTable(
+  "skills",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+  },
+  // Uniqueness is case-insensitive because lookups go through `lower(name)`.
+  // A plain unique index on `name` would let "React" and "react" coexist.
+  (table) => [uniqueIndex("skills_name_lower_unique").on(sql`lower(${table.name})`)]
+);
+
+export const userSkills = pgTable(
   "user_skills",
   {
     userId: integer("user_id")
@@ -72,10 +100,10 @@ export const userSkills = sqliteTable(
   (table) => [primaryKey(table.userId, table.skillId)]
 );
 
-export const connections = sqliteTable(
+export const connections = pgTable(
   "connections",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     requesterId: integer("requester_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -83,9 +111,7 @@ export const connections = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     pairKey: text("pair_key").notNull(),
-    status: text("status", { enum: ["pending", "accepted", "rejected"] })
-      .notNull()
-      .default("pending"),
+    status: connectionStatusEnum("status").notNull().default("pending"),
     ...timestamps,
   },
   (table) => [
@@ -95,10 +121,10 @@ export const connections = sqliteTable(
   ]
 );
 
-export const posts = sqliteTable(
+export const posts = pgTable(
   "posts",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -114,7 +140,7 @@ export const posts = sqliteTable(
   ]
 );
 
-export const postLikes = sqliteTable(
+export const postLikes = pgTable(
   "post_likes",
   {
     userId: integer("user_id")
@@ -123,7 +149,7 @@ export const postLikes = sqliteTable(
     postId: integer("post_id")
       .notNull()
       .references(() => posts.id, { onDelete: "cascade" }),
-    createdAt: integer("created_at").notNull().default(now),
+    createdAt: bigint("created_at", { mode: "number" }).notNull().default(now),
   },
   (table) => [
     primaryKey(table.userId, table.postId),
@@ -131,10 +157,10 @@ export const postLikes = sqliteTable(
   ]
 );
 
-export const comments = sqliteTable(
+export const comments = pgTable(
   "comments",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     postId: integer("post_id")
       .notNull()
       .references(() => posts.id, { onDelete: "cascade" }),
@@ -150,10 +176,10 @@ export const comments = sqliteTable(
   ]
 );
 
-export const opportunities = sqliteTable(
+export const opportunities = pgTable(
   "opportunities",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     ownerId: integer("owner_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -172,10 +198,10 @@ export const opportunities = sqliteTable(
   ]
 );
 
-export const notifications = sqliteTable(
+export const notifications = pgTable(
   "notifications",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -185,7 +211,7 @@ export const notifications = sqliteTable(
     type: text("type").notNull(),
     message: text("message").notNull(),
     link: text("link"),
-    read: integer("read").notNull().default(0),
+    read: boolean("read").notNull().default(false),
     ...timestamps,
   },
   (table) => [
@@ -194,10 +220,10 @@ export const notifications = sqliteTable(
   ]
 );
 
-export const messages = sqliteTable(
+export const messages = pgTable(
   "messages",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     senderId: integer("sender_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -205,7 +231,7 @@ export const messages = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     text: text("text").notNull(),
-    read: integer("read").notNull().default(0),
+    read: boolean("read").notNull().default(false),
     ...timestamps,
   },
   (table) => [
@@ -214,22 +240,22 @@ export const messages = sqliteTable(
   ]
 );
 
-export const stories = sqliteTable(
+export const stories = pgTable(
   "stories",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     image: text("image").notNull(),
-    expiresAt: integer("expires_at").notNull(),
+    expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
     ...timestamps,
   },
   (table) => [index("stories_user_idx").on(table.userId)]
 );
 
-export const projects = sqliteTable("projects", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
+export const projects = pgTable("projects", {
+  id: serial("id").primaryKey(),
   ownerId: integer("owner_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
@@ -241,17 +267,17 @@ export const projects = sqliteTable("projects", {
   ...timestamps,
 });
 
-export const projectMembers = sqliteTable(
+export const projectMembers = pgTable(
   "project_members",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     projectId: integer("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    role: text("role", { enum: ["member", "owner"] }).notNull().default("member"),
+    role: projectRoleEnum("role").notNull().default("member"),
     ...timestamps,
   },
   (table) => [
@@ -263,19 +289,17 @@ export const projectMembers = sqliteTable(
   ]
 );
 
-export const projectJoinRequests = sqliteTable(
+export const projectJoinRequests = pgTable(
   "project_join_requests",
   {
-    id: integer("id").primaryKey({ autoIncrement: true }),
+    id: serial("id").primaryKey(),
     projectId: integer("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     userId: integer("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    status: text("status", { enum: ["pending", "accepted", "rejected"] })
-      .notNull()
-      .default("pending"),
+    status: joinRequestStatusEnum("status").notNull().default("pending"),
     ...timestamps,
   },
   (table) => [
@@ -294,7 +318,12 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   }),
   skills: many(userSkills),
   posts: many(posts),
-  connections: many(connections),
+  // A connection is undirected from either side, so `connections` has two
+  // distinct paths back to users. They must be declared separately and matched
+  // to `requester` / `addressee` in connectionsRelations, otherwise the
+  // relation is ambiguous and `db.query.users` cannot resolve it.
+  sentConnectionRequests: many(connections, { relationName: "requester" }),
+  receivedConnectionRequests: many(connections, { relationName: "addressee" }),
   projects: many(projects, { relationName: "ownedProjects" }),
   memberships: many(projectMembers),
   joinRequests: many(projectJoinRequests),

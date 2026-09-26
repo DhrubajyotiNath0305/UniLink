@@ -1,5 +1,5 @@
-import { drizzle } from "drizzle-orm/libsql";
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
-import { turso } from "./turso";
+import { pool } from "./postgres";
 
-export const db = drizzle(turso, { schema });
+export const db = drizzle(pool, { schema });

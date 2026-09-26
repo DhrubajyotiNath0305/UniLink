@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { comments, postLikes, posts } from "@/db/schema";
 import { ApiError } from "@/lib/api-error";
@@ -125,7 +125,7 @@ export async function deletePost(id, userId) {
   if (existing.userId !== userId) {
     throw new ApiError(403, "You can only delete your own posts", "FORBIDDEN");
   }
-  await db.delete(posts).where(eq(posts.id, id)).run();
+  await db.delete(posts).where(eq(posts.id, id));
 }
 
 export async function togglePostLike(postId, userId) {
@@ -145,12 +145,17 @@ export async function togglePostLike(postId, userId) {
       await tx
         .delete(postLikes)
         .where(and(eq(postLikes.postId, postId), eq(postLikes.userId, userId)))
-        .run();
+      // The counter is incremented in SQL rather than from a value read before
+      // the transaction. Postgres runs concurrent statements against the same
+      // row, so writing `post.likes - 1` from a stale read loses updates and
+      // permanently skews the total.
       await tx
         .update(posts)
-        .set({ likes: Math.max(0, post.likes - 1), updatedAt: Date.now() })
+        .set({
+          likes: sql`greatest(0, ${posts.likes} - 1)`,
+          updatedAt: Date.now(),
+        })
         .where(eq(posts.id, postId))
-        .run();
     });
     liked = false;
   } else {
@@ -159,12 +164,10 @@ export async function togglePostLike(postId, userId) {
         .insert(postLikes)
         .values({ postId, userId })
         .onConflictDoNothing()
-        .run();
       await tx
         .update(posts)
-        .set({ likes: post.likes + 1, updatedAt: Date.now() })
+        .set({ likes: sql`${posts.likes} + 1`, updatedAt: Date.now() })
         .where(eq(posts.id, postId))
-        .run();
     });
     liked = true;
   }
@@ -188,9 +191,8 @@ export async function createComment(postId, userId, content) {
       .returning();
     await tx
       .update(posts)
-      .set({ comments: post.comments + 1, updatedAt: Date.now() })
+      .set({ comments: sql`${posts.comments} + 1`, updatedAt: Date.now() })
       .where(eq(posts.id, postId))
-      .run();
     return [row];
   });
   const created = await db.query.comments.findFirst({

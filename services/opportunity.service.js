@@ -96,7 +96,6 @@ export async function updateOpportunity(opportunityId, ownerId, data) {
     .update(opportunities)
     .set({ ...patch, updatedAt: Date.now() })
     .where(eq(opportunities.id, opportunityId))
-    .run();
 
   return getPublicOpportunityById(opportunityId);
 }
@@ -109,5 +108,5 @@ export async function deleteOpportunity(opportunityId, ownerId) {
   if (existing.ownerId !== ownerId) {
     throw new ApiError(403, "Only the author can delete this opportunity", "FORBIDDEN");
   }
-  await db.delete(opportunities).where(eq(opportunities.id, opportunityId)).run();
+  await db.delete(opportunities).where(eq(opportunities.id, opportunityId));
 }

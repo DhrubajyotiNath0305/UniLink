@@ -10,9 +10,11 @@ import {
 import { createServer } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createClient } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
-import { migrate } from "drizzle-orm/libsql/migrator";
+import { Pool } from "pg";
+import { inArray, like, or, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import * as schema from "@/db/schema";
 import { generateRunId } from "./helpers";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -21,7 +23,8 @@ const logFile = path.join(tmpDir, "next.log");
 const metaFile = path.join(tmpDir, "api-run.json");
 
 const TEST_EMAIL_DOMAIN = "api-test.local";
-const LIVE_SCHEME = "libsql://";
+const POSTGRES_SCHEMES = ["postgres://", "postgresql://"];
+const LOCAL_HOSTS = ["localhost", "127.0.0.1", "::1", "[::1]"];
 const BOOT_TIMEOUT_MS = 120000;
 const DEFAULT_PORT = 3141;
 
@@ -115,56 +118,93 @@ function killTree(pid) {
   }
 }
 
-async function cleanup(meta) {
-  const { url, authToken, runId } = meta;
-  const client = createClient({ url, authToken, concurrency: 1 });
+// Deletes everything the run created, using the query builder rather than raw
+// SQL. The previous version hand-built `?` placeholder lists and reused one
+// list across two statements, which Postgres cannot express without manual
+// renumbering. Cascades are declared in the schema but the ordering is made
+// explicit here so the intent survives a future schema change.
+async function cleanup({ url, runId }) {
+  const pool = new Pool({ connectionString: url, max: 1 });
+  const db = drizzle(pool, { schema });
   try {
-    await client.execute("PRAGMA foreign_keys = ON;");
     const emailPattern = `%${runId}%@${TEST_EMAIL_DOMAIN}`;
-    const emailResult = await client.execute("SELECT id FROM users WHERE email LIKE ?", [
-      emailPattern,
-    ]);
-    const ids = emailResult.rows.map((row) => Number(row.id));
-    const placeholders = ids.map(() => "?").join(",");
+    const testUsers = await db
+      .select({ id: schema.users.id })
+      .from(schema.users)
+      .where(like(schema.users.email, emailPattern));
 
+    const ids = testUsers.map((row) => row.id);
     if (ids.length > 0) {
-      await client.execute(
-        `DELETE FROM project_join_requests WHERE user_id IN (${placeholders})`,
-        ids
+      const ownedProjects = await db
+        .select({ id: schema.projects.id })
+        .from(schema.projects)
+        .where(inArray(schema.projects.ownerId, ids));
+
+      const ownedProjectIds = ownedProjects.map((row) => row.id);
+
+      await db
+        .delete(schema.projectJoinRequests)
+        .where(
+          or(
+            inArray(schema.projectJoinRequests.userId, ids),
+            inArray(schema.projectJoinRequests.projectId, ownedProjectIds)
+          )
+        );
+      await db
+        .delete(schema.projectMembers)
+        .where(
+          or(
+            inArray(schema.projectMembers.userId, ids),
+            inArray(schema.projectMembers.projectId, ownedProjectIds)
+          )
+        );
+      await db.delete(schema.messages).where(
+        or(
+          inArray(schema.messages.senderId, ids),
+          inArray(schema.messages.receiverId, ids)
+        )
       );
-      await client.execute(
-        `DELETE FROM project_members WHERE user_id IN (${placeholders})`,
-        ids
+      await db.delete(schema.notifications).where(
+        or(
+          inArray(schema.notifications.userId, ids),
+          inArray(schema.notifications.senderId, ids)
+        )
       );
-      await client.execute(
-        `DELETE FROM project_join_requests WHERE project_id IN (SELECT id FROM projects WHERE owner_id IN (${placeholders}))`,
-        ids
-      );
-      await client.execute(
-        `DELETE FROM project_members WHERE project_id IN (SELECT id FROM projects WHERE owner_id IN (${placeholders}))`,
-        ids
-      );
-      await client.execute(`DELETE FROM posts WHERE user_id IN (${placeholders})`, ids);
-      await client.execute(
-        `DELETE FROM connections WHERE requester_id IN (${placeholders}) OR addressee_id IN (${placeholders})`,
-        [...ids, ...ids]
-      );
-      await client.execute(`DELETE FROM projects WHERE owner_id IN (${placeholders})`, ids);
-      await client.execute(`DELETE FROM profiles WHERE user_id IN (${placeholders})`, ids);
-      await client.execute(`DELETE FROM user_skills WHERE user_id IN (${placeholders})`, ids);
+      await db.delete(schema.postLikes).where(inArray(schema.postLikes.userId, ids));
+      await db.delete(schema.comments).where(inArray(schema.comments.userId, ids));
+      await db.delete(schema.stories).where(inArray(schema.stories.userId, ids));
+      await db
+        .delete(schema.opportunities)
+        .where(inArray(schema.opportunities.ownerId, ids));
+      await db.delete(schema.posts).where(inArray(schema.posts.userId, ids));
+      await db
+        .delete(schema.connections)
+        .where(
+          or(
+            inArray(schema.connections.requesterId, ids),
+            inArray(schema.connections.addresseeId, ids)
+          )
+        );
+      await db.delete(schema.projects).where(inArray(schema.projects.ownerId, ids));
+      await db.delete(schema.profiles).where(inArray(schema.profiles.userId, ids));
+      await db.delete(schema.userSkills).where(inArray(schema.userSkills.userId, ids));
     }
 
-    await client.execute("DELETE FROM skills WHERE name LIKE ?", [`TA-${runId}-%`]);
-    await client.execute("DELETE FROM users WHERE email LIKE ?", [emailPattern]);
+    // The skills table is global, so only the ones this run created are removed.
+    // The skills -> user_skills cascade removes their links, and any skill a
+    // test user borrowed from the wider catalogue is deliberately left intact.
+    await db.delete(schema.skills).where(like(schema.skills.name, `TA-${runId}-%`));
+    await db.delete(schema.users).where(like(schema.users.email, emailPattern));
 
-    const remaining = await client.execute("SELECT count(*) AS n FROM users WHERE email LIKE ?", [
-      emailPattern,
-    ]);
-    if (Number(remaining.rows[0].n) !== 0) {
-      console.error(`cleanup: ${remaining.rows[0].n} test user(s) still present`);
+    const remaining = await db
+      .select({ n: sql`count(*)::int` })
+      .from(schema.users)
+      .where(like(schema.users.email, emailPattern));
+    if (Number(remaining[0]?.n ?? 0) !== 0) {
+      console.error(`cleanup: ${remaining[0]?.n} test user(s) still present`);
     }
   } finally {
-    client.close();
+    await pool.end();
   }
 }
 
@@ -174,8 +214,7 @@ export default async function setup() {
 
   loadDotEnv(path.join(root, ".env"));
 
-  const url = process.env.TURSO_DATABASE_URL;
-  const authToken = process.env.TURSO_AUTH_TOKEN;
+  const url = process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL;
 
   if (process.env.API_TEST_ALLOW_LIVE !== "1") {
     throw new Error(
@@ -183,39 +222,43 @@ export default async function setup() {
         '  $env:API_TEST_ALLOW_LIVE="1"; npm run test:api'
     );
   }
-  if (!url || !url.startsWith(LIVE_SCHEME)) {
+  if (!url || !POSTGRES_SCHEMES.some((scheme) => url.startsWith(scheme))) {
     throw new Error(
-      `TURSO_DATABASE_URL must point at a remote libsql:// database to run API e2e tests (got "${url || "unset"}").`
+      `DATABASE_URL must be a postgres:// or postgresql:// connection string to run API e2e tests (got "${url || "unset"}").`
     );
   }
-  if (!authToken || !process.env.JWT_SECRET) {
-    throw new Error("TURSO_AUTH_TOKEN and JWT_SECRET must be present in .env.");
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET must be present in .env.");
   }
 
-  console.error(
-    [
-      "============================================================",
-      "  API e2e tests running against the LIVE database:",
-      `    ${url}`,
-      "  Records created will be removed during teardown.",
-      "============================================================",
-    ].join("\n")
-  );
+  // A localhost database is a deliberate throwaway sandbox, so it is allowed
+  // without the loud banner. Anything remote gets the full warning.
+  const isLocal = LOCAL_HOSTS.includes(new URL(url).hostname);
+  if (!isLocal || process.env.API_TEST_ALLOW_LOCAL !== "1") {
+    console.error(
+      [
+        "============================================================",
+        "  API e2e tests running against the LIVE database:",
+        `    ${url.replace(/\/\/([^:]+):[^@]+@/, "//$1:***@")}`,
+        "  Records created will be removed during teardown.",
+        "============================================================",
+      ].join("\n")
+    );
+  }
 
   const runId = generateRunId();
-  const schemaClient = createClient({ url, authToken, concurrency: 1 });
+  const schemaPool = new Pool({ connectionString: url, max: 1 });
   try {
-    const check = await schemaClient.execute(
-      "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'users'"
+    const schemaDb = drizzle(schemaPool, { schema });
+    const check = await schemaDb.execute(
+      sql`select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name = 'users'`
     );
-    if (Number(check.rows[0].n) === 0) {
+    if (Number(check.rows[0]?.n ?? 0) === 0) {
       console.error("Empty database detected - applying schema from db/migrations ...");
-      await migrate(drizzle(schemaClient), {
-        migrationsFolder: path.join(root, "db", "migrations"),
-      });
+      await migrate(schemaDb, { migrationsFolder: path.join(root, "db", "migrations") });
     }
   } finally {
-    schemaClient.close();
+    await schemaPool.end();
   }
 
   const preferred =
@@ -243,7 +286,9 @@ export default async function setup() {
 
   await waitForServer(baseUrl, child);
 
-  const meta = { baseUrl, runId, port, url, authToken };
+  // No credentials are written to disk: the spawned server inherits the
+  // environment, and the test client is given the JWT from the login response.
+  const meta = { baseUrl, runId, port, url };
   writeFileSync(metaFile, JSON.stringify(meta));
 
   return async function teardown() {

@@ -105,7 +105,6 @@ export async function createProject(ownerId, { name, description, technologies, 
     await tx
       .insert(projectMembers)
       .values({ projectId: project.id, userId: ownerId, role: "owner" })
-      .run();
     return project;
   });
   return getPublicProject(created.id);
@@ -178,7 +177,6 @@ export async function updateProject(projectId, ownerId, data) {
     .update(projects)
     .set({ ...patch, updatedAt: Date.now() })
     .where(eq(projects.id, projectId))
-    .run();
 
   return getPublicProject(projectId, { includeJoinRequests: true });
 }
@@ -189,12 +187,10 @@ export async function deleteProject(projectId, ownerId) {
     await tx
       .delete(projectJoinRequests)
       .where(eq(projectJoinRequests.projectId, projectId))
-      .run();
     await tx
       .delete(projectMembers)
       .where(eq(projectMembers.projectId, projectId))
-      .run();
-    await tx.delete(projects).where(eq(projects.id, projectId)).run();
+    await tx.delete(projects).where(eq(projects.id, projectId));
   });
 }
 
@@ -212,7 +208,7 @@ export async function addProjectMember(projectId, ownerId, userId) {
     throw new ApiError(409, "This user is already a project member", "ALREADY_MEMBER");
   }
 
-  await db.insert(projectMembers).values({ projectId, userId, role: "member" }).run();
+  await db.insert(projectMembers).values({ projectId, userId, role: "member" });
   return getPublicProject(projectId, { includeJoinRequests: true });
 }
 
@@ -311,7 +307,6 @@ export async function decideJoinRequest(projectId, ownerId, requestId, action) {
       .update(projectJoinRequests)
       .set({ status: "rejected", updatedAt: Date.now() })
       .where(eq(projectJoinRequests.id, requestId))
-      .run();
     return getPublicProject(projectId, { includeJoinRequests: true });
   }
 
@@ -320,12 +315,10 @@ export async function decideJoinRequest(projectId, ownerId, requestId, action) {
       .update(projectJoinRequests)
       .set({ status: "accepted", updatedAt: Date.now() })
       .where(eq(projectJoinRequests.id, requestId))
-      .run();
     await tx
       .insert(projectMembers)
       .values({ projectId, userId: request.userId, role: "member" })
       .onConflictDoNothing()
-      .run();
   });
 
   return getPublicProject(projectId, { includeJoinRequests: true });
